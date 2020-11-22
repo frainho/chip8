@@ -93,45 +93,77 @@ impl Chip8 {
                 self.program_counter += 2;
             }
             0x7000..=0x7FFF => {
-                //  Adds NN to VX. (Carry flag is not changed)
+                // What happens with overflow ?
+                let v_register_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                let value_to_add = (self.opcode & 0x00FF) as u8;
+
+                self.v_registers[v_register_index] += value_to_add;
+                self.program_counter += 2;
             }
             0x8000..=0x8FFF => {
                 match self.opcode & 0x000F {
                     0x0000 => {
-                        // 8XY0 - Sets VX to the value of VY.
+                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+
+                        self.v_registers[vx_index] = self.v_registers[vy_index];
+                        self.program_counter += 2;
                     }
                     0x0001 => {
-                        // 8XY1 - Sets VX to VX or VY. (Bitwise OR operation)
+                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+
+                        self.v_registers[vx_index] =
+                            self.v_registers[vx_index] | self.v_registers[vy_index];
+                        self.program_counter += 2;
                     }
                     0x0002 => {
-                        // 8XY2 - Sets VX to VX and VY. (Bitwise AND operation)
+                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+
+                        self.v_registers[vx_index] =
+                            self.v_registers[vx_index] & self.v_registers[vy_index];
+                        self.program_counter += 2;
                     }
                     0x0003 => {
-                        // 8XY3 - Sets VX to VX xor VY.
+                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+
+                        self.v_registers[vx_index] =
+                            self.v_registers[vx_index] ^ self.v_registers[vy_index];
+                        self.program_counter += 2;
                     }
                     0x0004 => {
-                        // 8XY4 - Adds VY to VX. VF is set to 1 when there's a carry, and to 0 when there isn't.
-                        // We extract the Y from the opcode which is 00Y0 and then we shift it 4 bytes to the right
                         let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
-                        // We extract the X from the opcode which is 0X00 and then we shift it 8 bytes to the right
                         let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
 
                         let vy = self.v_registers[vy_index];
                         let vx = self.v_registers[vx_index];
 
-                        // We sum the result, which can overflow and be bigger than 255 (8 bits)
-                        let (sum, overflowed) = vx.overflowing_add(vy);
+                        let (result, overflowed) = vx.overflowing_add(vy);
 
-                        // If it overflows, we need to set the carry flag to 1 which is the last register of the array
                         if overflowed {
                             self.v_registers[15usize] = 1;
                         }
 
-                        self.v_registers[vx_index] = sum;
+                        self.v_registers[vx_index] = result;
                         self.program_counter += 2;
                     }
                     0x0005 => {
-                        // 8XY5 - VY is subtracted from VX. VF is set to 0 when there's a borrow, and 1 when there isn't.
+                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+
+                        let vy = self.v_registers[vy_index];
+                        let vx = self.v_registers[vx_index];
+
+                        let (result, overflowed) = vx.overflowing_sub(vy);
+
+                        if overflowed {
+                            self.v_registers[15usize] = 1;
+                        }
+
+                        self.v_registers[vx_index] = result;
+                        self.program_counter += 2;
                     }
                     0x0006 => {
                         // 8XY6 - Stores the least significant bit of VX in VF and then shifts VX to the right by 1.
@@ -269,24 +301,6 @@ mod test {
     }
 
     #[test]
-    fn it_adds_the_value_of_vy_to_vx_setting_vf_when_there_is_a_carry() {
-        let mut chip8 = Chip8::new();
-
-        chip8.v_registers[0] = 200;
-        chip8.v_registers[1] = 100;
-
-        chip8.memory[0x200] = 0x80;
-        chip8.memory[0x201] = 0x14;
-
-        chip8.emulate_cycle();
-
-        // Overflowing add of 200 + 100 = 44
-        assert_eq!(chip8.v_registers[0], 44);
-        assert_eq!(chip8.v_registers[15usize], 1);
-        assert_eq!(chip8.program_counter, 0x202);
-    }
-
-    #[test]
     fn it_sets_the_index_register_value() {
         let mut chip8 = Chip8::new();
 
@@ -299,7 +313,7 @@ mod test {
     }
 
     #[test]
-    fn it_sets_the_value_of_vx_to_0x23() {
+    fn it_sets_the_value_of_vx() {
         let mut chip8 = Chip8::new();
         chip8.v_registers[4] = 0xF;
         set_initial_opcode_to(0x6423, &mut chip8.memory);
@@ -307,6 +321,99 @@ mod test {
         chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[4], 0x23);
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_adds_the_value_to_vx() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[1] = 0x10;
+        set_initial_opcode_to(0x7110, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[1], 0x20);
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_sets_the_value_of_vx_to_vy() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[1] = 0x10;
+        chip8.v_registers[2] = 0x20;
+        set_initial_opcode_to(0x8120, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[1], 0x20);
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_sets_the_value_of_vx_to_vx_bitwise_or_vy() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[6] = 0x10;
+        chip8.v_registers[7] = 0x20;
+        set_initial_opcode_to(0x8671, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[6], 0x30);
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_sets_the_value_of_vx_to_vx_bitwise_and_vy() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[8] = 0xFF;
+        chip8.v_registers[9] = 0x10;
+        set_initial_opcode_to(0x8892, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[8], 0x10);
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_sets_the_value_of_vx_to_vx_bitwise_xor_vy() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[7] = 0x72;
+        chip8.v_registers[8] = 0x15;
+        set_initial_opcode_to(0x8783, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[7], 0x67);
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_adds_the_value_of_vy_to_vx_setting_vf_when_there_is_a_carry() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[0] = 0xC8;
+        chip8.v_registers[1] = 0x64;
+        set_initial_opcode_to(0x8014, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        // Overflowing add of 200 + 100 = 44
+        assert_eq!(chip8.v_registers[0], 0x2C);
+        assert_eq!(chip8.v_registers[15usize], 1);
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_subtracts_the_value_of_vy_of_vf_setting_vf_then_there_is_a_borrow() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[0] = 0xD1;
+        chip8.v_registers[1] = 0xD2;
+        set_initial_opcode_to(0x8015, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[0], 0xFF);
+        assert_eq!(chip8.v_registers[15usize], 1);
         assert_eq!(chip8.program_counter, 0x202);
     }
 }
