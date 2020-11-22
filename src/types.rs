@@ -1,0 +1,11 @@
+pub type Memory = [u8; 4096];
+pub type VRegisters = [u8; 16];
+pub type IndexRegister = u16;
+pub type ProgramCounter = u16;
+pub type Graphics = [u8; 2048];
+pub type DelayTimer = u8;
+pub type SoundTimer = u8;
+pub type Stack = [u16; 16];
+pub type StackPointer = u16;
+// pub type Keyboard = [u8; 17];
+pub type Opcode = u16;
