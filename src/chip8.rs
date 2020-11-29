@@ -60,30 +60,52 @@ impl Chip8 {
                 // Clear the screen
             }
             0x00EE => {
-                // Returns from a subroutine
+                self.stack_pointer -= 1;
+                self.program_counter = self.stack[self.stack_pointer as usize];
+                self.stack[self.stack_pointer as usize] = 0;
             }
             0x0000..=0x0FFF => {
-                // Calls machine code routine at address NNN
+                // Calls machine code routine (RCA 1802 for COSMAC VIP) at address NNN. Not necessary for most ROMs.
             }
-            0x1000..=0x1FFF => {
-                // Jumps to address NNN
-            }
+            0x1000..=0x1FFF => self.program_counter = self.opcode & 0x0FFF,
             0x2000..=0x2FFF => {
-                // We store the current location of the program_counter on the stack
                 self.stack[self.stack_pointer as usize] = self.program_counter;
-                // We increment the stack pointer so that we don't overwrite the current stack
                 self.stack_pointer += 1;
-                // We "move" the program counter to the correct address
                 self.program_counter = self.opcode & 0x0FFF;
             }
             0x3000..=0x3FFF => {
-                // Skips the next instruction if VX equals NN. (Usually the next instruction is a jump to skip a code block)
+                let v_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                let v_register_value = self.v_registers[v_index];
+                let value = (self.opcode & 0x00FF) as u8;
+
+                if v_register_value == value {
+                    self.program_counter += 4;
+                } else {
+                    self.program_counter += 2;
+                }
             }
             0x4000..=0x4FFF => {
-                // Skips the next instruction if VX doesn't equal NN. (Usually the next instruction is a jump to skip a code block)
+                let v_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                let v_register_value = self.v_registers[v_index];
+                let value = (self.opcode & 0x00FF) as u8;
+
+                if v_register_value != value {
+                    self.program_counter += 4;
+                } else {
+                    self.program_counter += 2;
+                }
             }
             0x5000..=0x5FFF => {
-                // Skips the next instruction if VX equals VY. (Usually the next instruction is a jump to skip a code block)
+                let x_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                let x_register_value = self.v_registers[x_index];
+                let y_index = ((self.opcode & 0x00F0) >> 4) as usize;
+                let y_register_value = self.v_registers[y_index];
+
+                if x_register_value == y_register_value {
+                    self.program_counter += 4;
+                } else {
+                    self.program_counter += 2;
+                }
             }
             0x6000..=0x6FFF => {
                 let v_register_index = ((self.opcode & 0x0F00) >> 8) as usize;
@@ -93,7 +115,6 @@ impl Chip8 {
                 self.program_counter += 2;
             }
             0x7000..=0x7FFF => {
-                // What happens with overflow ?
                 let v_register_index = ((self.opcode & 0x0F00) >> 8) as usize;
                 let value_to_add = (self.opcode & 0x00FF) as u8;
 
@@ -166,10 +187,28 @@ impl Chip8 {
                         self.program_counter += 2;
                     }
                     0x0006 => {
-                        // 8XY6 - Stores the least significant bit of VX in VF and then shifts VX to the right by 1.
+                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                        let vx = self.v_registers[vx_index];
+                        self.v_registers[15] = vx & 1;
+                        self.v_registers[vx_index] >>= 1;
+                        self.program_counter += 2;
                     }
                     0x0007 => {
-                        // 8XY7 - Sets VX to VY minus VX. VF is set to 0 when there's a borrow, and 1 when there isn't.
+                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+
+                        let vy = self.v_registers[vy_index];
+                        let vx = self.v_registers[vx_index];
+
+                        let (result, overflowed) = vx.overflowing_sub(vy);
+
+                        if overflowed {
+                            self.v_registers[15] = 1;
+                        } else {
+                            self.v_registers[15] = 0;
+                        }
+
+                        self.v_registers[vx_index] = result;
                     }
                     0x000E => {
                         // 8XYE - Stores the most significant bit of VX in VF and then shifts VX to the left by 1.
@@ -178,7 +217,14 @@ impl Chip8 {
                 }
             }
             0x9000..=0x9FFF => {
-                // 9XY0 - Skips the next instruction if VX doesn't equal VY. (Usually the next instruction is a jump to skip a code block)
+                let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+                let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                let vy = self.v_registers[vy_index];
+                let vx = self.v_registers[vx_index];
+
+                if vx != vy {
+                    self.program_counter += 2;
+                }
             }
             0xA000..=0xAFFF => {
                 let new_index_register_value = self.opcode & 0x0FFF;
@@ -298,6 +344,186 @@ mod test {
         assert_eq!(chip8.stack[0], 0x200);
         assert_eq!(chip8.stack_pointer, 1);
         assert_eq!(chip8.program_counter, 0x010);
+    }
+
+    #[test]
+    fn it_returns_from_a_subroutine() {
+        let mut chip8 = Chip8::new();
+
+        chip8.stack[0] = 0x123;
+        chip8.stack_pointer = 1;
+
+        set_initial_opcode_to(0x00EE, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.stack[0], 0);
+        assert_eq!(chip8.stack_pointer, 0);
+        assert_eq!(chip8.program_counter, 0x123);
+    }
+
+    #[test]
+    fn it_jumps_to_the_correct_address() {
+        let mut chip8 = Chip8::new();
+
+        set_initial_opcode_to(0x176C, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x76C);
+    }
+
+    #[test]
+    fn it_skips_the_next_instruction_if_vx_equals_nn() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[2] = 0x6C;
+        chip8.program_counter = 0x200;
+
+        set_initial_opcode_to(0x326C, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x204);
+    }
+
+    #[test]
+    fn it_does_not_skip_the_next_instruction_if_vx_not_equal_nn() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[2] = 0x6C;
+        chip8.program_counter = 0x200;
+
+        set_initial_opcode_to(0x326B, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_skips_the_next_instruction_if_vx_not_equals_nn() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[2] = 0x6A;
+        chip8.program_counter = 0x200;
+
+        set_initial_opcode_to(0x426C, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x204);
+    }
+
+    #[test]
+    fn it_does_not_skip_the_next_instruction_if_vx_equal_nn() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[2] = 0x6C;
+        chip8.program_counter = 0x200;
+
+        set_initial_opcode_to(0x426C, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_skips_the_next_instruction_if_vx_equals_vy() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[2] = 0x6A;
+        chip8.v_registers[3] = 0x6A;
+        chip8.program_counter = 0x200;
+
+        set_initial_opcode_to(0x5230, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x204);
+    }
+
+    #[test]
+    fn it_does_not_skip_the_next_instruction_if_vx_not_equal_vy() {
+        let mut chip8 = Chip8::new();
+        chip8.v_registers[2] = 0x6C;
+        chip8.v_registers[5] = 0x57;
+        chip8.program_counter = 0x200;
+
+        set_initial_opcode_to(0x5250, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_stores_the_least_significant_bit_of_vx_in_vf_and_shifts_vx_to_the_right_by_1() {
+        let mut chip8 = Chip8::new();
+
+        chip8.v_registers[6] = 0b00000011;
+
+        set_initial_opcode_to(0x86A6, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[6], 0b00000001);
+        assert_eq!(chip8.v_registers[15], 0b1);
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_sets_vx_to_vy_minus_vx_vf_is_set_to_0_when_there_is_a_borrow() {
+        let mut chip8 = Chip8::new();
+
+        chip8.v_registers[4] = 0x20;
+        chip8.v_registers[5] = 0x11;
+
+        set_initial_opcode_to(0x8457, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[4], 0xF);
+        assert_eq!(chip8.v_registers[15], 0);
+    }
+
+    #[test]
+    fn it_sets_vx_to_vy_minus_vx_vf_is_set_to_1_when_there_isnt_a_borrow() {
+        let mut chip8 = Chip8::new();
+
+        chip8.v_registers[4] = 0x11;
+        chip8.v_registers[5] = 0x20;
+
+        set_initial_opcode_to(0x8457, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[4], 0xF1);
+        assert_eq!(chip8.v_registers[15], 1);
+    }
+
+    #[test]
+    fn it_skips_the_next_instruction_if_vx_not_equals_vy() {
+        let mut chip8 = Chip8::new();
+
+        chip8.v_registers[10] = 0x11;
+        chip8.v_registers[11] = 0x20;
+
+        set_initial_opcode_to(0x9AB0, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_doesnt_skip_the_next_instruction_if_vx_equals_vy() {
+        let mut chip8 = Chip8::new();
+
+        chip8.v_registers[10] = 0x11;
+        chip8.v_registers[11] = 0x11;
+
+        set_initial_opcode_to(0x9AB0, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x200);
     }
 
     #[test]
