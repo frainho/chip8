@@ -8,7 +8,7 @@ use std::error::Error;
 use chip8::Chip8;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut chip8 = Chip8::new();
+    let mut chip8 = Chip8::new(Box::new(rand::thread_rng()));
 
     chip8.initialize();
 

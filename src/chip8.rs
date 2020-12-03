@@ -1,4 +1,5 @@
 use std::{fs::File, io::prelude::*, io::BufReader, path::PathBuf};
+use rand::prelude::*;
 
 use crate::{
     font_set::FONT_SET,
@@ -18,10 +19,11 @@ pub struct Chip8 {
     delay_timer: DelayTimer,
     sound_timer: SoundTimer,
     stack: Stack,
+    random_number_generator: Box<dyn RngCore>
 }
 
 impl Chip8 {
-    pub fn new() -> Chip8 {
+    pub fn new(random_number_generator: Box<dyn RngCore>) -> Chip8 {
         Chip8 {
             opcode: 0,
             program_counter: 0x200,
@@ -33,6 +35,7 @@ impl Chip8 {
             stack: [0; 16],
             delay_timer: 0,
             sound_timer: 0,
+            random_number_generator
         }
     }
 
@@ -232,10 +235,15 @@ impl Chip8 {
                 self.program_counter += 2;
             }
             0xB000..=0xBFFF => {
-                // Jumps to the address NNN plus V0.
+                let value_to_add = self.opcode & 0x0FFF;
+                let v0_value = self.v_registers[0] as u16; 
+                self.program_counter += value_to_add + v0_value;
             }
             0xC000..=0xCFFF => {
-                // Sets VX to the result of a bitwise and operation on a random number (Typically: 0 to 255) and NN.
+                let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                let opcode_value = (self.opcode & 0x00FF) as u8;
+                let random_number: u8 = self.random_number_generator.gen();
+                self.v_registers[vx_index] = random_number & opcode_value;
             }
             0xD000..=0xDFFF => {
                 // Draws a sprite at coordinate (VX, VY) that has a width of 8 pixels and a height of N+1 pixels. Each row of 8 pixels is read as bit-coded starting from memory location I; I value doesn’t change after the execution of this instruction. As described above, VF is set to 1 if any screen pixels are flipped from set to unset when the sprite is drawn, and to 0 if that doesn’t happen
@@ -280,13 +288,17 @@ impl Chip8 {
 
 #[cfg(test)]
 mod test {
-    use crate::test_utils::{set_initial_opcode_to, TestFile};
+    use crate::test_utils::{TestFile, get_mock_random_number_generator, set_initial_opcode_to};
 
     use super::*;
 
+    fn get_chip8_instance() -> Chip8 {
+        Chip8::new(get_mock_random_number_generator())
+    }
+
     #[test]
     fn it_sets_the_correct_default_values() {
-        let chip8 = Chip8::new();
+        let chip8 = get_chip8_instance();
 
         assert_eq!(chip8.opcode, 0);
         assert_eq!(chip8.program_counter, 0x200);
@@ -302,7 +314,7 @@ mod test {
 
     #[test]
     fn it_loads_the_font_set_on_initialization() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
 
         chip8.initialize();
 
@@ -313,7 +325,7 @@ mod test {
     fn it_loads_the_program_to_memory() -> Result<(), std::io::Error> {
         let fake_data = b"fake_data";
         let _file = TestFile::create("IBM Logo.ch8", fake_data)?;
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
 
         chip8.load_program("IBM Logo.ch8")?;
 
@@ -323,7 +335,7 @@ mod test {
 
     #[test]
     fn it_fetches_correct_opcode_when_emulating_the_first_cycle() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.memory[0x200] = 1;
         chip8.memory[0x201] = 2;
 
@@ -335,7 +347,7 @@ mod test {
 
     #[test]
     fn it_calls_the_subroutine_at_the_correct_address() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.memory[0x200] = 0x20;
         chip8.memory[0x201] = 0x10;
 
@@ -348,7 +360,7 @@ mod test {
 
     #[test]
     fn it_returns_from_a_subroutine() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
 
         chip8.stack[0] = 0x123;
         chip8.stack_pointer = 1;
@@ -364,7 +376,7 @@ mod test {
 
     #[test]
     fn it_jumps_to_the_correct_address() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
 
         set_initial_opcode_to(0x176C, &mut chip8.memory);
 
@@ -375,7 +387,7 @@ mod test {
 
     #[test]
     fn it_skips_the_next_instruction_if_vx_equals_nn() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[2] = 0x6C;
         chip8.program_counter = 0x200;
 
@@ -388,7 +400,7 @@ mod test {
 
     #[test]
     fn it_does_not_skip_the_next_instruction_if_vx_not_equal_nn() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[2] = 0x6C;
         chip8.program_counter = 0x200;
 
@@ -401,7 +413,7 @@ mod test {
 
     #[test]
     fn it_skips_the_next_instruction_if_vx_not_equals_nn() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[2] = 0x6A;
         chip8.program_counter = 0x200;
 
@@ -414,7 +426,7 @@ mod test {
 
     #[test]
     fn it_does_not_skip_the_next_instruction_if_vx_equal_nn() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[2] = 0x6C;
         chip8.program_counter = 0x200;
 
@@ -427,7 +439,7 @@ mod test {
 
     #[test]
     fn it_skips_the_next_instruction_if_vx_equals_vy() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[2] = 0x6A;
         chip8.v_registers[3] = 0x6A;
         chip8.program_counter = 0x200;
@@ -441,7 +453,7 @@ mod test {
 
     #[test]
     fn it_does_not_skip_the_next_instruction_if_vx_not_equal_vy() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[2] = 0x6C;
         chip8.v_registers[5] = 0x57;
         chip8.program_counter = 0x200;
@@ -455,7 +467,7 @@ mod test {
 
     #[test]
     fn it_stores_the_least_significant_bit_of_vx_in_vf_and_shifts_vx_to_the_right_by_1() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[6] = 0b00000011;
 
@@ -470,7 +482,7 @@ mod test {
 
     #[test]
     fn it_sets_vx_to_vy_minus_vx_vf_is_set_to_0_when_there_is_a_borrow() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[4] = 0x20;
         chip8.v_registers[5] = 0x11;
@@ -485,7 +497,7 @@ mod test {
 
     #[test]
     fn it_sets_vx_to_vy_minus_vx_vf_is_set_to_1_when_there_isnt_a_borrow() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[4] = 0x11;
         chip8.v_registers[5] = 0x20;
@@ -500,7 +512,7 @@ mod test {
 
     #[test]
     fn it_skips_the_next_instruction_if_vx_not_equals_vy() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[10] = 0x11;
         chip8.v_registers[11] = 0x20;
@@ -514,7 +526,7 @@ mod test {
 
     #[test]
     fn it_doesnt_skip_the_next_instruction_if_vx_equals_vy() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[10] = 0x11;
         chip8.v_registers[11] = 0x11;
@@ -528,7 +540,7 @@ mod test {
 
     #[test]
     fn it_sets_the_index_register_value() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
 
         set_initial_opcode_to(0xA111, &mut chip8.memory);
 
@@ -540,7 +552,7 @@ mod test {
 
     #[test]
     fn it_sets_the_value_of_vx() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[4] = 0xF;
         set_initial_opcode_to(0x6423, &mut chip8.memory);
 
@@ -552,7 +564,7 @@ mod test {
 
     #[test]
     fn it_adds_the_value_to_vx() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[1] = 0x10;
         set_initial_opcode_to(0x7110, &mut chip8.memory);
 
@@ -564,7 +576,7 @@ mod test {
 
     #[test]
     fn it_sets_the_value_of_vx_to_vy() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[1] = 0x10;
         chip8.v_registers[2] = 0x20;
         set_initial_opcode_to(0x8120, &mut chip8.memory);
@@ -577,7 +589,7 @@ mod test {
 
     #[test]
     fn it_sets_the_value_of_vx_to_vx_bitwise_or_vy() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[6] = 0x10;
         chip8.v_registers[7] = 0x20;
         set_initial_opcode_to(0x8671, &mut chip8.memory);
@@ -590,7 +602,7 @@ mod test {
 
     #[test]
     fn it_sets_the_value_of_vx_to_vx_bitwise_and_vy() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[8] = 0xFF;
         chip8.v_registers[9] = 0x10;
         set_initial_opcode_to(0x8892, &mut chip8.memory);
@@ -603,7 +615,7 @@ mod test {
 
     #[test]
     fn it_sets_the_value_of_vx_to_vx_bitwise_xor_vy() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[7] = 0x72;
         chip8.v_registers[8] = 0x15;
         set_initial_opcode_to(0x8783, &mut chip8.memory);
@@ -616,7 +628,7 @@ mod test {
 
     #[test]
     fn it_adds_the_value_of_vy_to_vx_setting_vf_when_there_is_a_carry() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[0] = 0xC8;
         chip8.v_registers[1] = 0x64;
         set_initial_opcode_to(0x8014, &mut chip8.memory);
@@ -631,7 +643,7 @@ mod test {
 
     #[test]
     fn it_subtracts_the_value_of_vy_of_vf_setting_vf_then_there_is_a_borrow() {
-        let mut chip8 = Chip8::new();
+        let mut chip8 = get_chip8_instance();
         chip8.v_registers[0] = 0xD1;
         chip8.v_registers[1] = 0xD2;
         set_initial_opcode_to(0x8015, &mut chip8.memory);
@@ -642,4 +654,29 @@ mod test {
         assert_eq!(chip8.v_registers[15usize], 1);
         assert_eq!(chip8.program_counter, 0x202);
     }
+
+    #[test]
+    fn it_jumps_to_the_address_nnn_plus_vw0() {
+        let mut chip8 = get_chip8_instance();
+
+        chip8.v_registers[0] = 0x1;
+        set_initial_opcode_to(0xB100, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x301);
+    } 
+
+    // Sets VX to the result of a bitwise and operation on a random number (Typically: 0 to 255) and NN.
+    #[test]
+    fn it_sets_vx_to_random_number_bitwise_and_nn() {
+        let mut chip8 = get_chip8_instance();
+
+        set_initial_opcode_to(0xC313, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[3], 0x3)
+    }
+
 }
