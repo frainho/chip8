@@ -7,5 +7,5 @@ pub type DelayTimer = u8;
 pub type SoundTimer = u8;
 pub type Stack = [u16; 16];
 pub type StackPointer = u16;
-// pub type Keyboard = [u8; 17];
+pub type Keyboard = [u8; 17];
 pub type Opcode = u16;

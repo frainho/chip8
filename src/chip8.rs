@@ -1,41 +1,44 @@
-use std::{fs::File, io::prelude::*, io::BufReader, path::PathBuf};
 use rand::prelude::*;
+use std::{fs::File, io::prelude::*, io::BufReader, path::PathBuf};
 
 use crate::{
     font_set::FONT_SET,
     types::{
-        DelayTimer, Graphics, IndexRegister, Memory, Opcode, ProgramCounter, SoundTimer, Stack,
-        StackPointer, VRegisters,
+        DelayTimer, Graphics, IndexRegister, Keyboard, Memory, Opcode, ProgramCounter, SoundTimer,
+        Stack, StackPointer, VRegisters,
     },
 };
+
 pub struct Chip8 {
+    delay_timer: DelayTimer,
+    graphics: Graphics,
+    index_register: IndexRegister,
+    keyboard: Keyboard,
+    memory: Memory,
     opcode: Opcode,
     program_counter: ProgramCounter,
-    index_register: IndexRegister,
-    stack_pointer: StackPointer,
-    memory: Memory,
-    graphics: Graphics,
-    v_registers: VRegisters,
-    delay_timer: DelayTimer,
+    random_number_generator: Box<dyn RngCore>,
     sound_timer: SoundTimer,
     stack: Stack,
-    random_number_generator: Box<dyn RngCore>
+    stack_pointer: StackPointer,
+    v_registers: VRegisters,
 }
 
 impl Chip8 {
     pub fn new(random_number_generator: Box<dyn RngCore>) -> Chip8 {
         Chip8 {
+            delay_timer: 0,
+            graphics: [0; 2048],
+            index_register: 0,
+            keyboard: [0; 17],
+            memory: [0; 4096],
             opcode: 0,
             program_counter: 0x200,
-            index_register: 0,
-            stack_pointer: 0,
-            memory: [0; 4096],
-            graphics: [0; 2048],
-            v_registers: [0; 16],
-            stack: [0; 16],
-            delay_timer: 0,
+            random_number_generator,
             sound_timer: 0,
-            random_number_generator
+            stack: [0; 16],
+            stack_pointer: 0,
+            v_registers: [0; 16],
         }
     }
 
@@ -60,15 +63,14 @@ impl Chip8 {
 
         match self.opcode {
             0x00E0 => {
-                // Clear the screen
+                for i in 0..self.graphics.len() {
+                    self.graphics[i] = 0;
+                }
             }
             0x00EE => {
                 self.stack_pointer -= 1;
                 self.program_counter = self.stack[self.stack_pointer as usize];
                 self.stack[self.stack_pointer as usize] = 0;
-            }
-            0x0000..=0x0FFF => {
-                // Calls machine code routine (RCA 1802 for COSMAC VIP) at address NNN. Not necessary for most ROMs.
             }
             0x1000..=0x1FFF => self.program_counter = self.opcode & 0x0FFF,
             0x2000..=0x2FFF => {
@@ -124,101 +126,102 @@ impl Chip8 {
                 self.v_registers[v_register_index] += value_to_add;
                 self.program_counter += 2;
             }
-            0x8000..=0x8FFF => {
-                match self.opcode & 0x000F {
-                    0x0000 => {
-                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
-                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+            0x8000..=0x8FFF => match self.opcode & 0x000F {
+                0x0000 => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
 
-                        self.v_registers[vx_index] = self.v_registers[vy_index];
-                        self.program_counter += 2;
-                    }
-                    0x0001 => {
-                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
-                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
-
-                        self.v_registers[vx_index] =
-                            self.v_registers[vx_index] | self.v_registers[vy_index];
-                        self.program_counter += 2;
-                    }
-                    0x0002 => {
-                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
-                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
-
-                        self.v_registers[vx_index] =
-                            self.v_registers[vx_index] & self.v_registers[vy_index];
-                        self.program_counter += 2;
-                    }
-                    0x0003 => {
-                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
-                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
-
-                        self.v_registers[vx_index] =
-                            self.v_registers[vx_index] ^ self.v_registers[vy_index];
-                        self.program_counter += 2;
-                    }
-                    0x0004 => {
-                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
-                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
-
-                        let vy = self.v_registers[vy_index];
-                        let vx = self.v_registers[vx_index];
-
-                        let (result, overflowed) = vx.overflowing_add(vy);
-
-                        if overflowed {
-                            self.v_registers[15usize] = 1;
-                        }
-
-                        self.v_registers[vx_index] = result;
-                        self.program_counter += 2;
-                    }
-                    0x0005 => {
-                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
-                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
-
-                        let vy = self.v_registers[vy_index];
-                        let vx = self.v_registers[vx_index];
-
-                        let (result, overflowed) = vx.overflowing_sub(vy);
-
-                        if overflowed {
-                            self.v_registers[15usize] = 1;
-                        }
-
-                        self.v_registers[vx_index] = result;
-                        self.program_counter += 2;
-                    }
-                    0x0006 => {
-                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
-                        let vx = self.v_registers[vx_index];
-                        self.v_registers[15] = vx & 1;
-                        self.v_registers[vx_index] >>= 1;
-                        self.program_counter += 2;
-                    }
-                    0x0007 => {
-                        let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
-                        let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
-
-                        let vy = self.v_registers[vy_index];
-                        let vx = self.v_registers[vx_index];
-
-                        let (result, overflowed) = vx.overflowing_sub(vy);
-
-                        if overflowed {
-                            self.v_registers[15] = 1;
-                        } else {
-                            self.v_registers[15] = 0;
-                        }
-
-                        self.v_registers[vx_index] = result;
-                    }
-                    0x000E => {
-                        // 8XYE - Stores the most significant bit of VX in VF and then shifts VX to the left by 1.
-                    }
-                    _ => panic!("Invalid opcode"),
+                    self.v_registers[vx_index] = self.v_registers[vy_index];
+                    self.program_counter += 2;
                 }
-            }
+                0x0001 => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+
+                    self.v_registers[vx_index] =
+                        self.v_registers[vx_index] | self.v_registers[vy_index];
+                    self.program_counter += 2;
+                }
+                0x0002 => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+
+                    self.v_registers[vx_index] =
+                        self.v_registers[vx_index] & self.v_registers[vy_index];
+                    self.program_counter += 2;
+                }
+                0x0003 => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+
+                    self.v_registers[vx_index] =
+                        self.v_registers[vx_index] ^ self.v_registers[vy_index];
+                    self.program_counter += 2;
+                }
+                0x0004 => {
+                    let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+
+                    let vy = self.v_registers[vy_index];
+                    let vx = self.v_registers[vx_index];
+
+                    let (result, overflowed) = vx.overflowing_add(vy);
+
+                    if overflowed {
+                        self.v_registers[15usize] = 1;
+                    }
+
+                    self.v_registers[vx_index] = result;
+                    self.program_counter += 2;
+                }
+                0x0005 => {
+                    let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+
+                    let vy = self.v_registers[vy_index];
+                    let vx = self.v_registers[vx_index];
+
+                    let (result, overflowed) = vx.overflowing_sub(vy);
+
+                    if overflowed {
+                        self.v_registers[15usize] = 1;
+                    }
+
+                    self.v_registers[vx_index] = result;
+                    self.program_counter += 2;
+                }
+                0x0006 => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let vx = self.v_registers[vx_index];
+                    self.v_registers[15] = vx & 1;
+                    self.v_registers[vx_index] >>= 1;
+                    self.program_counter += 2;
+                }
+                0x0007 => {
+                    let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+
+                    let vy = self.v_registers[vy_index];
+                    let vx = self.v_registers[vx_index];
+
+                    let (result, overflowed) = vx.overflowing_sub(vy);
+
+                    if overflowed {
+                        self.v_registers[15] = 1;
+                    } else {
+                        self.v_registers[15] = 0;
+                    }
+
+                    self.v_registers[vx_index] = result;
+                }
+                0x000E => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let vx_msb = self.v_registers[vx_index] >> 7;
+                    self.v_registers[15usize] = vx_msb;
+                    self.v_registers[vx_index] <<= 1;
+                }
+                _ => panic!("Invalid opcode: {:x}", self.opcode),
+            },
             0x9000..=0x9FFF => {
                 let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
                 let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
@@ -236,7 +239,7 @@ impl Chip8 {
             }
             0xB000..=0xBFFF => {
                 let value_to_add = self.opcode & 0x0FFF;
-                let v0_value = self.v_registers[0] as u16; 
+                let v0_value = self.v_registers[0] as u16;
                 self.program_counter += value_to_add + v0_value;
             }
             0xC000..=0xCFFF => {
@@ -246,26 +249,95 @@ impl Chip8 {
                 self.v_registers[vx_index] = random_number & opcode_value;
             }
             0xD000..=0xDFFF => {
-                // Draws a sprite at coordinate (VX, VY) that has a width of 8 pixels and a height of N+1 pixels. Each row of 8 pixels is read as bit-coded starting from memory location I; I value doesn’t change after the execution of this instruction. As described above, VF is set to 1 if any screen pixels are flipped from set to unset when the sprite is drawn, and to 0 if that doesn’t happen
+                let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                let vx = self.v_registers[vx_index];
+                let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
+                let vy = self.v_registers[vy_index];
+                let n = self.opcode & 0x000F;
+                let bytes_to_draw =
+                    &self.memory[self.index_register as usize..(self.index_register + n) as usize];
+
+                self.v_registers[15usize] = 0;
+                for (row, byte) in bytes_to_draw.iter().enumerate() {
+                    for column in 0..8 {
+                        let pixel_to_draw = (vx + (row as u8) + ((vy + column) * 64)) as usize;
+                        if byte & (0x80 >> column) != 0 {
+                            if self.graphics[pixel_to_draw] == 1 {
+                                self.v_registers[15usize] = 1;
+                                self.graphics[pixel_to_draw] ^= 1;
+                            }
+                        }
+                    }
+                }
+                self.program_counter += 2;
             }
-            0xE000..=0xEFFF => {
-                // EX9E - Skips the next instruction if the key stored in VX is pressed. (Usually the next instruction is a jump to skip a code block)
-                // EXA1 - Skips the next instruction if the key stored in VX isn't pressed. (Usually the next instruction is a jump to skip a code block)
-            }
-            0xF000..=0xFFFF => {
-                // FX07 - Sets VX to the value of the delay timer.
-                // FX0A - A key press is awaited, and then stored in VX. (Blocking Operation. All instruction halted until next key event)
-                // FX15 - Sets the delay timer to VX.
-                // FX18 - Sets the sound timer to VX.
-                // FX1E - Adds VX to I. VF is not affected.
-                // FX29 - Sets I to the location of the sprite for the character in VX. Characters 0-F (in hexadecimal) are represented by a 4x5 font.
-                // FX33 - Stores the binary-coded decimal representation of VX, with the most significant of three digits at the address in I, the middle digit at I plus 1, and the least significant digit at I plus 2. (In other words, take the decimal representation of VX, place the hundreds digit in memory at location in I, the tens digit at location I+1, and the ones digit at location I+2.)
-                // FX55 - Stores V0 to VX (including VX) in memory starting at address I. The offset from I is increased by 1 for each value written, but I itself is left unmodified.[d]
-                // FX65 - Fills V0 to VX (including VX) with values from memory starting at address I. The offset from I is increased by 1 for each value written, but I itself is left unmodified.[d]
-            }
+            0xE000..=0xEFFF => match self.opcode & 0x00FF {
+                0x009E => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let vx_value = self.v_registers[vx_index];
+                    if self.keyboard[vx_value as usize] == 1 {
+                        self.program_counter += 2;
+                    }
+                }
+                0x00A1 => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let vx_value = self.v_registers[vx_index];
+                    if self.keyboard[vx_value as usize] == 0 {
+                        self.program_counter += 2;
+                    }
+                }
+                _ => panic!("Invalid opcode: {:x}", self.opcode),
+            },
+            0xF000..=0xFFFF => match self.opcode & 0x00FF {
+                0x0007 => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    self.v_registers[vx_index] = self.delay_timer;
+                }
+                0x0015 => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    self.delay_timer = self.v_registers[vx_index];
+                }
+                0x0018 => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    self.sound_timer = self.v_registers[vx_index];
+                }
+                0x001E => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    self.index_register += self.v_registers[vx_index] as u16;
+                }
+                0x000A => {
+                    // FX0A - A key press is awaited, and then stored in VX. (Blocking Operation. All instruction halted until next key event)
+                }
+                0x0029 => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    self.index_register = self.v_registers[vx_index] as u16;
+                }
+                0x0033 => {
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let vx_value = self.v_registers[vx_index];
+
+                    self.memory[self.index_register as usize] = (vx_value / 100) % 100;
+                    self.memory[self.index_register as usize + 1] = (vx_value / 10) % 10;
+                    self.memory[self.index_register as usize + 2] = vx_value % 10;
+                }
+                0x0055 => {
+                    let range = self.index_register as usize..=self.index_register as usize + 15;
+                    for (memory_address, v_register_value) in range.zip(self.v_registers.iter()) {
+                        self.memory[memory_address] = *v_register_value;
+                    }
+                }
+                0x0065 => {
+                    let range = self.index_register as usize..=self.index_register as usize + 15;
+                    for (memory_address, v_register_index) in range.zip(0..16usize) {
+                        self.v_registers[v_register_index] = self.memory[memory_address];
+                    }
+                }
+                _ => panic!("Invalid opcode: {:x}", self.opcode),
+            },
+            _ => panic!("Invalid opcode: {:x}", self.opcode),
         };
 
-        // Update timers
+        self.update_timers()
     }
 
     fn load_font_set(&mut self) {
@@ -279,16 +351,23 @@ impl Chip8 {
         self.opcode = self.opcode | (self.memory[self.program_counter as usize + 1] as u16);
     }
 
-    fn _update_timers() {
-        /*
-          Besides executing opcodes, the Chip 8 also has two timers you will need to implement. As mentioned above, both timers (delay timer and sound timer) count down to zero if they have been set to a value larger than zero. Since these timers count down at 60 Hz, you might want to implement something that slows down your emulation cycle (Execute 60 opcodes in one second).
-        */
+    fn update_timers(&mut self) {
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
+
+        if self.sound_timer > 0 {
+            if self.sound_timer == 1 {
+                // beep
+            }
+            self.sound_timer -= 1;
+        }
     }
 }
 
 #[cfg(test)]
-mod test {
-    use crate::test_utils::{TestFile, get_mock_random_number_generator, set_initial_opcode_to};
+mod tests {
+    use crate::test_utils::{get_mock_random_number_generator, set_initial_opcode_to, TestFile};
 
     use super::*;
 
@@ -336,13 +415,43 @@ mod test {
     #[test]
     fn it_fetches_correct_opcode_when_emulating_the_first_cycle() {
         let mut chip8 = get_chip8_instance();
-        chip8.memory[0x200] = 1;
-        chip8.memory[0x201] = 2;
+        chip8.memory[0x200] = 0x10;
+        chip8.memory[0x201] = 0x20;
 
         chip8.emulate_cycle();
 
-        // 258 = 1 << 8 | 2
-        assert_eq!(chip8.opcode, 258);
+        assert_eq!(chip8.opcode, 4128);
+    }
+
+    #[test]
+    fn it_correctly_counts_down_the_timers() {
+        let mut chip8 = get_chip8_instance();
+        set_initial_opcode_to(0x00E0, &mut chip8.memory);
+
+        chip8.delay_timer = 1;
+        chip8.sound_timer = 1;
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.delay_timer, 0);
+        assert_eq!(chip8.sound_timer, 0);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.delay_timer, 0);
+        assert_eq!(chip8.sound_timer, 0);
+    }
+
+    #[test]
+    fn it_clears_the_display() {
+        let mut chip8 = get_chip8_instance();
+        chip8.graphics[1] = 69;
+        chip8.graphics[2] = 98;
+        set_initial_opcode_to(0x00E0, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.graphics, [0u8; 2048]);
     }
 
     #[test]
@@ -511,6 +620,20 @@ mod test {
     }
 
     #[test]
+    fn it_sets_vf_to_the_value_of_vx_msb_shifts_vx_left_by_1() {
+        let mut chip8 = get_chip8_instance();
+
+        chip8.v_registers[1] = 0b10000000;
+
+        set_initial_opcode_to(0x812E, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[15usize], 1);
+        assert_eq!(chip8.v_registers[1], 0);
+    }
+
+    #[test]
     fn it_skips_the_next_instruction_if_vx_not_equals_vy() {
         let mut chip8 = get_chip8_instance();
 
@@ -665,9 +788,8 @@ mod test {
         chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x301);
-    } 
+    }
 
-    // Sets VX to the result of a bitwise and operation on a random number (Typically: 0 to 255) and NN.
     #[test]
     fn it_sets_vx_to_random_number_bitwise_and_nn() {
         let mut chip8 = get_chip8_instance();
@@ -679,4 +801,132 @@ mod test {
         assert_eq!(chip8.v_registers[3], 0x3)
     }
 
+    //0xDXYN
+    #[test]
+    fn it_draws_the_correct_pixels() {
+        // TBD
+    }
+
+    #[test]
+    fn it_skips_instruction_if_key_press() {
+        let mut chip8 = get_chip8_instance();
+        chip8.v_registers[5] = 8;
+        chip8.keyboard[8] = 1;
+        set_initial_opcode_to(0xE59E, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_skips_instruction_if_key_not_pressed() {
+        let mut chip8 = get_chip8_instance();
+        chip8.v_registers[3] = 6;
+        chip8.keyboard[6] = 0;
+        set_initial_opcode_to(0xE3A1, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_sets_vx_to_the_value_of_the_delay_timer() {
+        let mut chip8 = get_chip8_instance();
+        chip8.delay_timer = 40;
+        set_initial_opcode_to(0xF307, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers[3], 40);
+    }
+
+    #[test]
+    fn it_sets_the_delay_timer_to_vx() {
+        let mut chip8 = get_chip8_instance();
+        chip8.v_registers[5] = 100;
+        set_initial_opcode_to(0xF515, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.delay_timer, 99);
+    }
+
+    #[test]
+    fn it_sets_the_sound_timer_to_vx() {
+        let mut chip8 = get_chip8_instance();
+        chip8.v_registers[3] = 10;
+        set_initial_opcode_to(0xF318, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.sound_timer, 9);
+    }
+
+    #[test]
+    fn it_adds_vx_to_i() {
+        let mut chip8 = get_chip8_instance();
+        chip8.v_registers[8] = 0x10;
+        chip8.index_register = 0x01;
+        set_initial_opcode_to(0xF81E, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.index_register, 0x11);
+    }
+
+    #[test]
+    fn it_sets_i_to_sprite_location_read_from_vx() {
+        let mut chip8 = get_chip8_instance();
+        chip8.v_registers[1] = 10;
+        set_initial_opcode_to(0xF129, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.index_register, 10);
+    }
+
+    #[test]
+    fn it_stores_bcd_of_vx_from_i() {
+        let mut chip8 = get_chip8_instance();
+        chip8.v_registers[9] = 123;
+        chip8.index_register = 0x203;
+        set_initial_opcode_to(0xF933, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.memory[chip8.index_register as usize], 1);
+        assert_eq!(chip8.memory[(chip8.index_register + 1) as usize], 2);
+        assert_eq!(chip8.memory[(chip8.index_register + 2) as usize], 3);
+    }
+
+    #[test]
+    fn it_writes_from_v_registers_starting_at_i() {
+        let mut chip8 = get_chip8_instance();
+        let v_registers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+        chip8.v_registers = v_registers;
+        chip8.index_register = 0x200;
+        set_initial_opcode_to(0xF355, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(
+            chip8.memory
+                [chip8.index_register as usize..chip8.index_register as usize + v_registers.len()],
+            v_registers
+        );
+    }
+
+    #[test]
+    fn it_writes_to_v_registers_starting_at_i() {
+        let mut chip8 = get_chip8_instance();
+        chip8.v_registers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+        chip8.index_register = 0x202;
+        set_initial_opcode_to(0xF365, &mut chip8.memory);
+
+        chip8.emulate_cycle();
+
+        assert_eq!(chip8.v_registers, [0u8; 16]);
+    }
 }
