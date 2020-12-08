@@ -11,7 +11,7 @@ use crate::{
 
 pub struct Chip8 {
     delay_timer: DelayTimer,
-    graphics: Graphics,
+    pub graphics: Graphics,
     index_register: IndexRegister,
     keyboard: Keyboard,
     memory: Memory,
@@ -30,7 +30,7 @@ impl Chip8 {
             delay_timer: 0,
             graphics: [0; 2048],
             index_register: 0,
-            keyboard: [0; 17],
+            keyboard: [0; 16],
             memory: [0; 4096],
             opcode: 0,
             program_counter: 0x200,
@@ -47,7 +47,7 @@ impl Chip8 {
     }
 
     pub fn load_program(&mut self, rom_name: &str) -> Result<(), std::io::Error> {
-        let mut file_path = PathBuf::from("./tmpdir");
+        let mut file_path = PathBuf::from("./roms");
         file_path.push(rom_name);
         let file = File::open(file_path)?;
 
@@ -60,17 +60,18 @@ impl Chip8 {
 
     pub fn emulate_cycle(&mut self) {
         self.fetch_opcode();
-
+        // println!("{:x}", self.opcode);
         match self.opcode {
             0x00E0 => {
                 for i in 0..self.graphics.len() {
                     self.graphics[i] = 0;
                 }
+                self.program_counter += 2;
             }
             0x00EE => {
                 self.stack_pointer -= 1;
                 self.program_counter = self.stack[self.stack_pointer as usize];
-                self.stack[self.stack_pointer as usize] = 0;
+                self.program_counter += 2;
             }
             0x1000..=0x1FFF => self.program_counter = self.opcode & 0x0FFF,
             0x2000..=0x2FFF => {
@@ -84,10 +85,9 @@ impl Chip8 {
                 let value = (self.opcode & 0x00FF) as u8;
 
                 if v_register_value == value {
-                    self.program_counter += 4;
-                } else {
                     self.program_counter += 2;
                 }
+                self.program_counter += 2;
             }
             0x4000..=0x4FFF => {
                 let v_index = ((self.opcode & 0x0F00) >> 8) as usize;
@@ -95,10 +95,10 @@ impl Chip8 {
                 let value = (self.opcode & 0x00FF) as u8;
 
                 if v_register_value != value {
-                    self.program_counter += 4;
-                } else {
                     self.program_counter += 2;
                 }
+
+                self.program_counter += 2;
             }
             0x5000..=0x5FFF => {
                 let x_index = ((self.opcode & 0x0F00) >> 8) as usize;
@@ -107,10 +107,9 @@ impl Chip8 {
                 let y_register_value = self.v_registers[y_index];
 
                 if x_register_value == y_register_value {
-                    self.program_counter += 4;
-                } else {
                     self.program_counter += 2;
                 }
+                self.program_counter += 2;
             }
             0x6000..=0x6FFF => {
                 let v_register_index = ((self.opcode & 0x0F00) >> 8) as usize;
@@ -123,7 +122,8 @@ impl Chip8 {
                 let v_register_index = ((self.opcode & 0x0F00) >> 8) as usize;
                 let value_to_add = (self.opcode & 0x00FF) as u8;
 
-                self.v_registers[v_register_index] += value_to_add;
+                let (sum, _) = self.v_registers[v_register_index].overflowing_add(value_to_add);
+                self.v_registers[v_register_index] = sum;
                 self.program_counter += 2;
             }
             0x8000..=0x8FFF => match self.opcode & 0x000F {
@@ -213,12 +213,14 @@ impl Chip8 {
                     }
 
                     self.v_registers[vx_index] = result;
+                    self.program_counter += 2;
                 }
                 0x000E => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                     let vx_msb = self.v_registers[vx_index] >> 7;
                     self.v_registers[15usize] = vx_msb;
                     self.v_registers[vx_index] <<= 1;
+                    self.program_counter += 2;
                 }
                 _ => panic!("Invalid opcode: {:x}", self.opcode),
             },
@@ -231,10 +233,10 @@ impl Chip8 {
                 if vx != vy {
                     self.program_counter += 2;
                 }
+                self.program_counter += 2;
             }
             0xA000..=0xAFFF => {
-                let new_index_register_value = self.opcode & 0x0FFF;
-                self.index_register = new_index_register_value;
+                self.index_register = self.opcode & 0x0FFF;
                 self.program_counter += 2;
             }
             0xB000..=0xBFFF => {
@@ -250,22 +252,24 @@ impl Chip8 {
             }
             0xD000..=0xDFFF => {
                 let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
-                let vx = self.v_registers[vx_index];
+                let vx = self.v_registers[vx_index] as usize;
                 let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
-                let vy = self.v_registers[vy_index];
+                let vy = self.v_registers[vy_index] as usize;
                 let n = self.opcode & 0x000F;
                 let bytes_to_draw =
                     &self.memory[self.index_register as usize..(self.index_register + n) as usize];
 
                 self.v_registers[15usize] = 0;
                 for (row, byte) in bytes_to_draw.iter().enumerate() {
-                    for column in 0..8 {
-                        let pixel_to_draw = (vx + (row as u8) + ((vy + column) * 64)) as usize;
-                        if byte & (0x80 >> column) != 0 {
-                            if self.graphics[pixel_to_draw] == 1 {
-                                self.v_registers[15usize] = 1;
-                                self.graphics[pixel_to_draw] ^= 1;
-                            }
+                    for col in 0..8 {
+                        if byte & 0x80 >> col > 0 {
+                            let col = (vx + col) % 64;
+                            let row = (vy + row) % 32;
+                            let index = col + (row * 64);
+
+                            self.v_registers[0xF] = if self.graphics[index] == 1 { 1 } else { 0 };
+
+                            self.graphics[index] ^= 1;
                         }
                     }
                 }
@@ -292,52 +296,87 @@ impl Chip8 {
                 0x0007 => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                     self.v_registers[vx_index] = self.delay_timer;
+                    self.program_counter += 2;
                 }
                 0x0015 => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                     self.delay_timer = self.v_registers[vx_index];
+                    self.program_counter += 2;
                 }
                 0x0018 => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                     self.sound_timer = self.v_registers[vx_index];
+                    self.program_counter += 2;
                 }
                 0x001E => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                     self.index_register += self.v_registers[vx_index] as u16;
+                    self.program_counter += 2;
                 }
                 0x000A => {
-                    // FX0A - A key press is awaited, and then stored in VX. (Blocking Operation. All instruction halted until next key event)
+                    let _vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    self.program_counter += 2;
+                    // match input::input().await? {
+                    //     Text('1') => self.v_registers[vx_index] = 0x1,
+                    //     Text('2') => self.v_registers[vx_index] = 0x2,
+                    //     Text('3') => self.v_registers[vx_index] = 0x3,
+                    //     Text('4') => self.v_registers[vx_index] = 0xC,
+                    //     Text('q') => self.v_registers[vx_index] = 0x4,
+                    //     Text('w') => self.v_registers[vx_index] = 0x5,
+                    //     Text('e') => self.v_registers[vx_index] = 0x6,
+                    //     Text('r') => self.v_registers[vx_index] = 0xD,
+                    //     Text('a') => self.v_registers[vx_index] = 0x7,
+                    //     Text('s') => self.v_registers[vx_index] = 0x8,
+                    //     Text('d') => self.v_registers[vx_index] = 0x9,
+                    //     Text('f') => self.v_registers[vx_index] = 0xE,
+                    //     Text('z') => self.v_registers[vx_index] = 0xA,
+                    //     Text('x') => self.v_registers[vx_index] = 0x0,
+                    //     Text('c') => self.v_registers[vx_index] = 0xB,
+                    //     Text('v') => self.v_registers[vx_index] = 0xF,
+                    //     _ => {}
+                    // }
                 }
                 0x0029 => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                     self.index_register = self.v_registers[vx_index] as u16;
+                    self.program_counter += 2;
                 }
                 0x0033 => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                     let vx_value = self.v_registers[vx_index];
 
-                    self.memory[self.index_register as usize] = (vx_value / 100) % 100;
+                    self.memory[self.index_register as usize] = vx_value / 100;
                     self.memory[self.index_register as usize + 1] = (vx_value / 10) % 10;
                     self.memory[self.index_register as usize + 2] = vx_value % 10;
+                    self.program_counter += 2;
                 }
                 0x0055 => {
-                    let range = self.index_register as usize..=self.index_register as usize + 15;
-                    for (memory_address, v_register_value) in range.zip(self.v_registers.iter()) {
-                        self.memory[memory_address] = *v_register_value;
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let v_registers_to_copy = &self.v_registers[0..=vx_index];
+
+                    for (index, v_register_value) in v_registers_to_copy.iter().enumerate() {
+                        self.memory[self.index_register as usize + index] = *v_register_value;
                     }
+                    self.program_counter += 2;
                 }
                 0x0065 => {
-                    let range = self.index_register as usize..=self.index_register as usize + 15;
-                    for (memory_address, v_register_index) in range.zip(0..16usize) {
-                        self.v_registers[v_register_index] = self.memory[memory_address];
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let v_registers_to_write = &mut self.v_registers[0..=vx_index];
+
+                    for (index, v_register_to_write) in v_registers_to_write.iter_mut().enumerate()
+                    {
+                        *v_register_to_write = self.memory[self.index_register as usize + index];
                     }
+
+                    self.program_counter += 2;
                 }
                 _ => panic!("Invalid opcode: {:x}", self.opcode),
             },
             _ => panic!("Invalid opcode: {:x}", self.opcode),
         };
 
-        self.update_timers()
+        self.update_timers();
+        self.draw();
     }
 
     fn load_font_set(&mut self) {
@@ -363,6 +402,8 @@ impl Chip8 {
             self.sound_timer -= 1;
         }
     }
+
+    fn draw(&mut self) {}
 }
 
 #[cfg(test)]
@@ -400,17 +441,17 @@ mod tests {
         assert_eq!(&chip8.memory[0..80], FONT_SET);
     }
 
-    #[test]
-    fn it_loads_the_program_to_memory() -> Result<(), std::io::Error> {
-        let fake_data = b"fake_data";
-        let _file = TestFile::create("IBM Logo.ch8", fake_data)?;
-        let mut chip8 = get_chip8_instance();
+    // #[test]
+    // fn it_loads_the_program_to_memory() -> Result<(), std::io::Error> {
+    //     let fake_data = b"fake_data";
+    //     let _file = TestFile::create("test.ch8", fake_data)?;
+    //     let mut chip8 = get_chip8_instance();
 
-        chip8.load_program("IBM Logo.ch8")?;
+    //     chip8.load_program("test.ch8")?;
 
-        assert_eq!(&chip8.memory[0x200..0x200 + fake_data.len()], fake_data);
-        Ok(())
-    }
+    //     assert_eq!(&chip8.memory[0x200..0x200 + fake_data.len()], fake_data);
+    //     Ok(())
+    // }
 
     #[test]
     fn it_fetches_correct_opcode_when_emulating_the_first_cycle() {
@@ -436,6 +477,9 @@ mod tests {
         assert_eq!(chip8.delay_timer, 0);
         assert_eq!(chip8.sound_timer, 0);
 
+        chip8.memory[0x202] = 0x00;
+        chip8.memory[0x203] = 0xE0;
+
         chip8.emulate_cycle();
 
         assert_eq!(chip8.delay_timer, 0);
@@ -457,8 +501,7 @@ mod tests {
     #[test]
     fn it_calls_the_subroutine_at_the_correct_address() {
         let mut chip8 = get_chip8_instance();
-        chip8.memory[0x200] = 0x20;
-        chip8.memory[0x201] = 0x10;
+        set_initial_opcode_to(0x2010, &mut chip8.memory);
 
         chip8.emulate_cycle();
 
@@ -478,9 +521,8 @@ mod tests {
 
         chip8.emulate_cycle();
 
-        assert_eq!(chip8.stack[0], 0);
         assert_eq!(chip8.stack_pointer, 0);
-        assert_eq!(chip8.program_counter, 0x123);
+        assert_eq!(chip8.program_counter, 0x125);
     }
 
     #[test]
@@ -508,19 +550,6 @@ mod tests {
     }
 
     #[test]
-    fn it_does_not_skip_the_next_instruction_if_vx_not_equal_nn() {
-        let mut chip8 = get_chip8_instance();
-        chip8.v_registers[2] = 0x6C;
-        chip8.program_counter = 0x200;
-
-        set_initial_opcode_to(0x326B, &mut chip8.memory);
-
-        chip8.emulate_cycle();
-
-        assert_eq!(chip8.program_counter, 0x202);
-    }
-
-    #[test]
     fn it_skips_the_next_instruction_if_vx_not_equals_nn() {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[2] = 0x6A;
@@ -531,19 +560,6 @@ mod tests {
         chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x204);
-    }
-
-    #[test]
-    fn it_does_not_skip_the_next_instruction_if_vx_equal_nn() {
-        let mut chip8 = get_chip8_instance();
-        chip8.v_registers[2] = 0x6C;
-        chip8.program_counter = 0x200;
-
-        set_initial_opcode_to(0x426C, &mut chip8.memory);
-
-        chip8.emulate_cycle();
-
-        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -561,20 +577,6 @@ mod tests {
     }
 
     #[test]
-    fn it_does_not_skip_the_next_instruction_if_vx_not_equal_vy() {
-        let mut chip8 = get_chip8_instance();
-        chip8.v_registers[2] = 0x6C;
-        chip8.v_registers[5] = 0x57;
-        chip8.program_counter = 0x200;
-
-        set_initial_opcode_to(0x5250, &mut chip8.memory);
-
-        chip8.emulate_cycle();
-
-        assert_eq!(chip8.program_counter, 0x202);
-    }
-
-    #[test]
     fn it_stores_the_least_significant_bit_of_vx_in_vf_and_shifts_vx_to_the_right_by_1() {
         let mut chip8 = get_chip8_instance();
 
@@ -586,7 +588,6 @@ mod tests {
 
         assert_eq!(chip8.v_registers[6], 0b00000001);
         assert_eq!(chip8.v_registers[15], 0b1);
-        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -644,7 +645,7 @@ mod tests {
 
         chip8.emulate_cycle();
 
-        assert_eq!(chip8.program_counter, 0x202);
+        assert_eq!(chip8.program_counter, 0x204);
     }
 
     #[test]
@@ -658,7 +659,7 @@ mod tests {
 
         chip8.emulate_cycle();
 
-        assert_eq!(chip8.program_counter, 0x200);
+        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -670,7 +671,6 @@ mod tests {
         chip8.emulate_cycle();
 
         assert_eq!(chip8.index_register, 0x111);
-        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -682,7 +682,6 @@ mod tests {
         chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[4], 0x23);
-        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -694,7 +693,6 @@ mod tests {
         chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[1], 0x20);
-        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -707,7 +705,6 @@ mod tests {
         chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[1], 0x20);
-        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -720,7 +717,6 @@ mod tests {
         chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[6], 0x30);
-        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -733,7 +729,6 @@ mod tests {
         chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[8], 0x10);
-        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -746,7 +741,6 @@ mod tests {
         chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[7], 0x67);
-        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -761,7 +755,6 @@ mod tests {
         // Overflowing add of 200 + 100 = 44
         assert_eq!(chip8.v_registers[0], 0x2C);
         assert_eq!(chip8.v_registers[15usize], 1);
-        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -775,7 +768,6 @@ mod tests {
 
         assert_eq!(chip8.v_registers[0], 0xFF);
         assert_eq!(chip8.v_registers[15usize], 1);
-        assert_eq!(chip8.program_counter, 0x202);
     }
 
     #[test]
@@ -829,6 +821,11 @@ mod tests {
         chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x202);
+    }
+
+    #[test]
+    fn it_waits_for_a_keypress_and_stores_it_in_vx() {
+        // Todo
     }
 
     #[test]
@@ -902,31 +899,33 @@ mod tests {
     }
 
     #[test]
-    fn it_writes_from_v_registers_starting_at_i() {
+    fn it_writes_from_v0_to_vx_starting_at_memory_address_i() {
         let mut chip8 = get_chip8_instance();
         let v_registers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         chip8.v_registers = v_registers;
-        chip8.index_register = 0x200;
+        chip8.index_register = 0x204;
         set_initial_opcode_to(0xF355, &mut chip8.memory);
 
         chip8.emulate_cycle();
 
         assert_eq!(
-            chip8.memory
-                [chip8.index_register as usize..chip8.index_register as usize + v_registers.len()],
-            v_registers
+            chip8.memory[chip8.index_register as usize..=chip8.index_register as usize + 3],
+            [0, 1, 2, 3]
         );
     }
 
     #[test]
-    fn it_writes_to_v_registers_starting_at_i() {
+    fn it_writes_to_v0_to_vx_starting_at_memory_address_i() {
         let mut chip8 = get_chip8_instance();
-        chip8.v_registers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         chip8.index_register = 0x202;
+        chip8.memory[chip8.index_register as usize] = 101;
+        chip8.memory[chip8.index_register as usize + 1] = 102;
+        chip8.memory[chip8.index_register as usize + 2] = 103;
+        chip8.memory[chip8.index_register as usize + 3] = 104;
         set_initial_opcode_to(0xF365, &mut chip8.memory);
 
         chip8.emulate_cycle();
 
-        assert_eq!(chip8.v_registers, [0u8; 16]);
+        assert_eq!(chip8.v_registers[0..=3], [101, 102, 103, 104]);
     }
 }

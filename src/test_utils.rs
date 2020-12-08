@@ -1,11 +1,10 @@
 #![allow(dead_code)]
-use std::{fs, fs::File, path::PathBuf};
-
 use rand::RngCore;
+use std::{fs, fs::File, io::stdout, path::PathBuf};
 
 use crate::types::Memory;
 
-const TEMP_FOLDER: &str = "./tmpdir";
+const TEMP_FOLDER: &str = "./roms";
 
 #[cfg(test)]
 pub struct TestFile {
@@ -43,7 +42,6 @@ pub fn set_initial_opcode_to(opcode: u16, memory: &mut Memory) {
     memory[0x200] = ((opcode & 0xFF00) >> 8) as u8;
     memory[0x201] = (opcode & 0x00FF) as u8;
 }
-
 
 pub fn get_mock_random_number_generator() -> Box<dyn RngCore> {
     use rand::rngs::mock::StepRng;
