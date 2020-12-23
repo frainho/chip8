@@ -13,7 +13,7 @@ pub struct Chip8 {
     delay_timer: DelayTimer,
     pub graphics: Graphics,
     index_register: IndexRegister,
-    keyboard: Keyboard,
+    pub keyboard: Keyboard,
     memory: Memory,
     opcode: Opcode,
     program_counter: ProgramCounter,
@@ -58,9 +58,11 @@ impl Chip8 {
         Ok(())
     }
 
-    pub fn emulate_cycle(&mut self) {
+    pub fn emulate_cycle<F>(&mut self, mut get_key_event: F)
+    where
+        F: FnMut() -> u8,
+    {
         self.fetch_opcode();
-        // println!("{:x}", self.opcode);
         match self.opcode {
             0x00E0 => {
                 for i in 0..self.graphics.len() {
@@ -249,6 +251,7 @@ impl Chip8 {
                 let opcode_value = (self.opcode & 0x00FF) as u8;
                 let random_number: u8 = self.random_number_generator.gen();
                 self.v_registers[vx_index] = random_number & opcode_value;
+                self.program_counter += 2;
             }
             0xD000..=0xDFFF => {
                 let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
@@ -282,6 +285,7 @@ impl Chip8 {
                     if self.keyboard[vx_value as usize] == 1 {
                         self.program_counter += 2;
                     }
+                    self.program_counter += 2;
                 }
                 0x00A1 => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
@@ -289,6 +293,7 @@ impl Chip8 {
                     if self.keyboard[vx_value as usize] == 0 {
                         self.program_counter += 2;
                     }
+                    self.program_counter += 2;
                 }
                 _ => panic!("Invalid opcode: {:x}", self.opcode),
             },
@@ -314,27 +319,9 @@ impl Chip8 {
                     self.program_counter += 2;
                 }
                 0x000A => {
-                    let _vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
+                    self.v_registers[vx_index] = get_key_event();
                     self.program_counter += 2;
-                    // match input::input().await? {
-                    //     Text('1') => self.v_registers[vx_index] = 0x1,
-                    //     Text('2') => self.v_registers[vx_index] = 0x2,
-                    //     Text('3') => self.v_registers[vx_index] = 0x3,
-                    //     Text('4') => self.v_registers[vx_index] = 0xC,
-                    //     Text('q') => self.v_registers[vx_index] = 0x4,
-                    //     Text('w') => self.v_registers[vx_index] = 0x5,
-                    //     Text('e') => self.v_registers[vx_index] = 0x6,
-                    //     Text('r') => self.v_registers[vx_index] = 0xD,
-                    //     Text('a') => self.v_registers[vx_index] = 0x7,
-                    //     Text('s') => self.v_registers[vx_index] = 0x8,
-                    //     Text('d') => self.v_registers[vx_index] = 0x9,
-                    //     Text('f') => self.v_registers[vx_index] = 0xE,
-                    //     Text('z') => self.v_registers[vx_index] = 0xA,
-                    //     Text('x') => self.v_registers[vx_index] = 0x0,
-                    //     Text('c') => self.v_registers[vx_index] = 0xB,
-                    //     Text('v') => self.v_registers[vx_index] = 0xF,
-                    //     _ => {}
-                    // }
                 }
                 0x0029 => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
@@ -375,7 +362,6 @@ impl Chip8 {
             _ => panic!("Invalid opcode: {:x}", self.opcode),
         };
 
-        self.update_timers();
         self.draw();
     }
 
@@ -390,14 +376,17 @@ impl Chip8 {
         self.opcode = self.opcode | (self.memory[self.program_counter as usize + 1] as u16);
     }
 
-    fn update_timers(&mut self) {
+    pub fn update_timers<F>(&mut self, play_sound: F)
+    where
+        F: Fn() -> (),
+    {
         if self.delay_timer > 0 {
             self.delay_timer -= 1;
         }
 
         if self.sound_timer > 0 {
             if self.sound_timer == 1 {
-                // beep
+                play_sound();
             }
             self.sound_timer -= 1;
         }
@@ -459,7 +448,7 @@ mod tests {
         chip8.memory[0x200] = 0x10;
         chip8.memory[0x201] = 0x20;
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.opcode, 4128);
     }
@@ -472,7 +461,7 @@ mod tests {
         chip8.delay_timer = 1;
         chip8.sound_timer = 1;
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.delay_timer, 0);
         assert_eq!(chip8.sound_timer, 0);
@@ -480,7 +469,7 @@ mod tests {
         chip8.memory[0x202] = 0x00;
         chip8.memory[0x203] = 0xE0;
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.delay_timer, 0);
         assert_eq!(chip8.sound_timer, 0);
@@ -493,7 +482,7 @@ mod tests {
         chip8.graphics[2] = 98;
         set_initial_opcode_to(0x00E0, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.graphics, [0u8; 2048]);
     }
@@ -503,7 +492,7 @@ mod tests {
         let mut chip8 = get_chip8_instance();
         set_initial_opcode_to(0x2010, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.stack[0], 0x200);
         assert_eq!(chip8.stack_pointer, 1);
@@ -519,7 +508,7 @@ mod tests {
 
         set_initial_opcode_to(0x00EE, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.stack_pointer, 0);
         assert_eq!(chip8.program_counter, 0x125);
@@ -531,7 +520,7 @@ mod tests {
 
         set_initial_opcode_to(0x176C, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.program_counter, 0x76C);
     }
@@ -544,7 +533,7 @@ mod tests {
 
         set_initial_opcode_to(0x326C, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.program_counter, 0x204);
     }
@@ -557,7 +546,7 @@ mod tests {
 
         set_initial_opcode_to(0x426C, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.program_counter, 0x204);
     }
@@ -571,7 +560,7 @@ mod tests {
 
         set_initial_opcode_to(0x5230, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.program_counter, 0x204);
     }
@@ -584,7 +573,7 @@ mod tests {
 
         set_initial_opcode_to(0x86A6, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[6], 0b00000001);
         assert_eq!(chip8.v_registers[15], 0b1);
@@ -599,7 +588,7 @@ mod tests {
 
         set_initial_opcode_to(0x8457, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[4], 0xF);
         assert_eq!(chip8.v_registers[15], 0);
@@ -614,7 +603,7 @@ mod tests {
 
         set_initial_opcode_to(0x8457, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[4], 0xF1);
         assert_eq!(chip8.v_registers[15], 1);
@@ -628,7 +617,7 @@ mod tests {
 
         set_initial_opcode_to(0x812E, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[15usize], 1);
         assert_eq!(chip8.v_registers[1], 0);
@@ -643,7 +632,7 @@ mod tests {
 
         set_initial_opcode_to(0x9AB0, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.program_counter, 0x204);
     }
@@ -657,7 +646,7 @@ mod tests {
 
         set_initial_opcode_to(0x9AB0, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.program_counter, 0x202);
     }
@@ -668,7 +657,7 @@ mod tests {
 
         set_initial_opcode_to(0xA111, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.index_register, 0x111);
     }
@@ -679,7 +668,7 @@ mod tests {
         chip8.v_registers[4] = 0xF;
         set_initial_opcode_to(0x6423, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[4], 0x23);
     }
@@ -690,7 +679,7 @@ mod tests {
         chip8.v_registers[1] = 0x10;
         set_initial_opcode_to(0x7110, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[1], 0x20);
     }
@@ -702,7 +691,7 @@ mod tests {
         chip8.v_registers[2] = 0x20;
         set_initial_opcode_to(0x8120, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[1], 0x20);
     }
@@ -714,7 +703,7 @@ mod tests {
         chip8.v_registers[7] = 0x20;
         set_initial_opcode_to(0x8671, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[6], 0x30);
     }
@@ -726,7 +715,7 @@ mod tests {
         chip8.v_registers[9] = 0x10;
         set_initial_opcode_to(0x8892, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[8], 0x10);
     }
@@ -738,7 +727,7 @@ mod tests {
         chip8.v_registers[8] = 0x15;
         set_initial_opcode_to(0x8783, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[7], 0x67);
     }
@@ -750,7 +739,7 @@ mod tests {
         chip8.v_registers[1] = 0x64;
         set_initial_opcode_to(0x8014, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         // Overflowing add of 200 + 100 = 44
         assert_eq!(chip8.v_registers[0], 0x2C);
@@ -764,7 +753,7 @@ mod tests {
         chip8.v_registers[1] = 0xD2;
         set_initial_opcode_to(0x8015, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[0], 0xFF);
         assert_eq!(chip8.v_registers[15usize], 1);
@@ -777,7 +766,7 @@ mod tests {
         chip8.v_registers[0] = 0x1;
         set_initial_opcode_to(0xB100, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.program_counter, 0x301);
     }
@@ -788,7 +777,7 @@ mod tests {
 
         set_initial_opcode_to(0xC313, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[3], 0x3)
     }
@@ -806,7 +795,7 @@ mod tests {
         chip8.keyboard[8] = 1;
         set_initial_opcode_to(0xE59E, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.program_counter, 0x202);
     }
@@ -818,7 +807,7 @@ mod tests {
         chip8.keyboard[6] = 0;
         set_initial_opcode_to(0xE3A1, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.program_counter, 0x202);
     }
@@ -834,7 +823,7 @@ mod tests {
         chip8.delay_timer = 40;
         set_initial_opcode_to(0xF307, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[3], 40);
     }
@@ -845,7 +834,7 @@ mod tests {
         chip8.v_registers[5] = 100;
         set_initial_opcode_to(0xF515, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.delay_timer, 99);
     }
@@ -856,7 +845,7 @@ mod tests {
         chip8.v_registers[3] = 10;
         set_initial_opcode_to(0xF318, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.sound_timer, 9);
     }
@@ -868,7 +857,7 @@ mod tests {
         chip8.index_register = 0x01;
         set_initial_opcode_to(0xF81E, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.index_register, 0x11);
     }
@@ -879,7 +868,7 @@ mod tests {
         chip8.v_registers[1] = 10;
         set_initial_opcode_to(0xF129, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.index_register, 10);
     }
@@ -891,7 +880,7 @@ mod tests {
         chip8.index_register = 0x203;
         set_initial_opcode_to(0xF933, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.memory[chip8.index_register as usize], 1);
         assert_eq!(chip8.memory[(chip8.index_register + 1) as usize], 2);
@@ -906,7 +895,7 @@ mod tests {
         chip8.index_register = 0x204;
         set_initial_opcode_to(0xF355, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(
             chip8.memory[chip8.index_register as usize..=chip8.index_register as usize + 3],
@@ -924,7 +913,7 @@ mod tests {
         chip8.memory[chip8.index_register as usize + 3] = 104;
         set_initial_opcode_to(0xF365, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle(|| 1);
 
         assert_eq!(chip8.v_registers[0..=3], [101, 102, 103, 104]);
     }
