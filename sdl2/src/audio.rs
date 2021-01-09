@@ -8,7 +8,6 @@ use sdl2::{
 
 pub struct SdlAudio {
     audio_device: AudioDevice<SquareWave>,
-    audio_spec: AudioSpecDesired,
 }
 
 impl SdlAudio {
@@ -25,10 +24,7 @@ impl SdlAudio {
             volume: 0.25,
         })?;
 
-        Ok(SdlAudio {
-            audio_device,
-            audio_spec,
-        })
+        Ok(SdlAudio { audio_device })
     }
 }
 
