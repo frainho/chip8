@@ -1,9 +1,11 @@
+use rand::Rng;
+
+use std::{error::Error, thread, time::Duration};
+
 mod audio;
 mod graphics;
 mod keyboard;
 mod rom_loader;
-
-use std::{error::Error, thread, time::Duration};
 
 use audio::SdlAudio;
 use chip8_core::Chip8;
@@ -19,7 +21,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sdl_keyboard = SdlKeyboard::new(&sdl_context)?;
 
     let mut chip8 = Chip8::new(
-        Box::new(|| 1),
+        Box::new(|| rand::thread_rng().gen()),
         Box::new(sdl_audio),
         Box::new(sdl_keyboard.get_keyboard_handler()),
     );
