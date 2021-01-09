@@ -1,24 +1,9 @@
 use std::{error::Error, thread, time::Duration};
 
-use chip8_core::{Audio, Chip8};
-use sdl2::{
-    audio::{AudioCallback, AudioSpecDesired},
-    event::Event,
-    keyboard::Keycode,
-    pixels::Color,
-    rect::Rect,
-};
-
-struct SdlAudio;
-impl Audio for SdlAudio {
-    fn play(&self) -> () {
-        todo!()
-    }
-
-    fn stop(&self) -> () {
-        todo!()
-    }
-}
+use audio::SdlAudio;
+use chip8_core::Chip8;
+use sdl2::{event::Event, keyboard::Keycode, pixels::Color, rect::Rect};
+mod audio;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let sdl_context = sdl2::init()?;
@@ -30,45 +15,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         .opengl()
         .build()?;
 
-    let audio_subsystem = sdl_context.audio().unwrap();
-    let audio_spec = AudioSpecDesired {
-        freq: Some(44100),
-        channels: Some(1),
-        samples: None,
-    };
-    struct SquareWave {
-        phase_inc: f32,
-        phase: f32,
-        volume: f32,
-    }
-    impl AudioCallback for SquareWave {
-        type Channel = f32;
-
-        fn callback(&mut self, out: &mut [f32]) {
-            // Generate a square wave
-            for x in out.iter_mut() {
-                *x = if self.phase <= 0.5 {
-                    self.volume
-                } else {
-                    -self.volume
-                };
-                self.phase = (self.phase + self.phase_inc) % 1.0;
-            }
-        }
-    }
-
-    let _audio_device = audio_subsystem
-        .open_playback(None, &audio_spec, |spec| SquareWave {
-            phase_inc: 440.0 / spec.freq as f32,
-            phase: 0.0,
-            volume: 0.25,
-        })
-        .unwrap();
+    let sdl_audio = SdlAudio::new(&sdl_context)?;
 
     let mut canvas = window.into_canvas().build()?;
     let mut event_pump = sdl_context.event_pump()?;
 
-    let mut chip8 = Chip8::new(Box::new(|| 1), SdlAudio);
+    let mut chip8 = Chip8::new(Box::new(|| 1), sdl_audio);
     chip8.initialize();
     chip8.load_program("Space Invaders.ch8")?;
 
