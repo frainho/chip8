@@ -2,22 +2,17 @@ use std::{error::Error, thread, time::Duration};
 
 use audio::SdlAudio;
 use chip8_core::Chip8;
-use sdl2::{event::Event, keyboard::Keycode, pixels::Color, rect::Rect};
+use graphics::SdlGraphics;
+use sdl2::{event::Event, keyboard::Keycode};
 mod audio;
+mod graphics;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let sdl_context = sdl2::init()?;
-    let video_subsystem = sdl_context.video()?;
-
-    let window = video_subsystem
-        .window("chip8", 640, 320)
-        .position_centered()
-        .opengl()
-        .build()?;
 
     let sdl_audio = SdlAudio::new(&sdl_context)?;
+    let mut sdl_graphics = SdlGraphics::new(&sdl_context)?;
 
-    let mut canvas = window.into_canvas().build()?;
     let mut event_pump = sdl_context.event_pump()?;
 
     let mut chip8 = Chip8::new(Box::new(|| 1), sdl_audio);
@@ -110,23 +105,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
 
-        let rects = chip8
-            .graphics
-            .iter()
-            .enumerate()
-            .filter(|(_, pixel)| **pixel == 1)
-            .map(|(idx, _)| {
-                let row = (idx / 64usize) * 10;
-                let col = (idx % 64usize) * 10;
-                Rect::new(col as i32, row as i32, 10, 10)
-            })
-            .collect::<Vec<Rect>>();
-
-        canvas.set_draw_color(Color::RGB(0, 0, 0));
-        canvas.clear();
-        canvas.set_draw_color(Color::RGB(255, 255, 255));
-        canvas.fill_rects(&rects)?;
-        canvas.present();
+        sdl_graphics.draw(&chip8.graphics)?;
 
         // 500hz
         thread::sleep(Duration::from_millis(2));
