@@ -1,4 +1,4 @@
-use std::{error::Error, fs::File, io::prelude::*, io::BufReader, path::PathBuf};
+use std::{error::Error, io::prelude::*};
 
 pub use audio::Audio;
 use font_set::FONT_SET;
@@ -62,14 +62,9 @@ impl<'a> Chip8<'a> {
         self.load_font_set();
     }
 
-    pub fn load_program(&mut self, rom_name: &str) -> Result<(), std::io::Error> {
-        let mut file_path = PathBuf::from("./roms");
-        file_path.push(rom_name);
-        let file = File::open(file_path)?;
-
-        let mut reader = BufReader::new(file);
-        let program_memory = &mut self.memory[self.program_counter as usize..];
-        reader.read(program_memory)?;
+    pub fn load_program(&mut self, rom_data: Vec<u8>) -> Result<(), std::io::Error> {
+        let mut program_memory = &mut self.memory[self.program_counter as usize..];
+        program_memory.write_all(&rom_data)?;
 
         Ok(())
     }

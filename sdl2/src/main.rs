@@ -1,12 +1,15 @@
+mod audio;
+mod graphics;
+mod keyboard;
+mod rom_loader;
+
 use std::{error::Error, thread, time::Duration};
 
 use audio::SdlAudio;
 use chip8_core::Chip8;
 use graphics::SdlGraphics;
 use keyboard::SdlKeyboard;
-mod audio;
-mod graphics;
-mod keyboard;
+use rom_loader::RomLoader;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let sdl_context = sdl2::init()?;
@@ -21,12 +24,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         Box::new(sdl_keyboard.get_keyboard_handler()),
     );
     chip8.initialize();
-    chip8.load_program("Space Invaders.ch8")?;
+
+    let rom_data = RomLoader::load_rom("Space Invaders.ch8")?;
+    chip8.load_program(rom_data)?;
 
     'main: loop {
         if sdl_keyboard.should_exit() == true {
             break 'main;
         }
+
         chip8.emulate_cycle()?;
 
         sdl_graphics.draw(&chip8.graphics)?;
