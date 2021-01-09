@@ -1,0 +1,10 @@
+[package]
+name = "sdl2"
+version = "0.1.0"
+authors = ["Filipe Rainho <filipenrainho@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+rand = "0.7"
+sdl2 = "0.34"
+chip8-core = { path = "../chip8-core" }

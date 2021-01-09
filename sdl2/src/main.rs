@@ -1,18 +1,24 @@
-mod chip8;
-mod font_set;
-mod test_utils;
-mod types;
-
 use std::{error::Error, thread, time::Duration};
 
-use chip8::Chip8;
+use chip8_core::{Audio, Chip8};
 use sdl2::{
-    audio::{AudioCallback, AudioSpecDesired, AudioStatus},
+    audio::{AudioCallback, AudioSpecDesired},
     event::Event,
     keyboard::Keycode,
     pixels::Color,
     rect::Rect,
 };
+
+struct SdlAudio;
+impl Audio for SdlAudio {
+    fn play(&self) -> () {
+        todo!()
+    }
+
+    fn stop(&self) -> () {
+        todo!()
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let sdl_context = sdl2::init()?;
@@ -51,7 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let audio_device = audio_subsystem
+    let _audio_device = audio_subsystem
         .open_playback(None, &audio_spec, |spec| SquareWave {
             phase_inc: 440.0 / spec.freq as f32,
             phase: 0.0,
@@ -62,11 +68,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut canvas = window.into_canvas().build()?;
     let mut event_pump = sdl_context.event_pump()?;
 
-    let mut chip8 = Chip8::new(Box::new(rand::thread_rng()));
+    let mut chip8 = Chip8::new(Box::new(|| 1), SdlAudio);
     chip8.initialize();
     chip8.load_program("Space Invaders.ch8")?;
 
-    let mut frame = 1;
     'main: loop {
         let on_wait_key_event = || {
             let key_pressed = match event_pump.wait_event() {
@@ -173,15 +178,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         // 500hz
         thread::sleep(Duration::from_millis(2));
-        frame += 1;
-
-        // 60hz
-        if frame % 8 == 0 {
-            chip8.update_timers(|| audio_device.resume());
-        }
-        if frame % 32 == 0 && audio_device.status() == AudioStatus::Playing {
-            audio_device.pause()
-        }
     }
 
     Ok(())

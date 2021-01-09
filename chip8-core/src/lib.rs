@@ -1,15 +1,17 @@
-use rand::prelude::*;
 use std::{fs::File, io::prelude::*, io::BufReader, path::PathBuf};
 
-use crate::{
-    font_set::FONT_SET,
-    types::{
-        DelayTimer, Graphics, IndexRegister, Keyboard, Memory, Opcode, ProgramCounter, SoundTimer,
-        Stack, StackPointer, VRegisters,
-    },
+pub use audio::Audio;
+use font_set::FONT_SET;
+use types::{
+    DelayTimer, Graphics, IndexRegister, Keyboard, Memory, Opcode, ProgramCounter, SoundTimer,
+    Stack, StackPointer, VRegisters,
 };
 
-pub struct Chip8 {
+mod audio;
+mod font_set;
+mod types;
+
+pub struct Chip8<'audio> {
     delay_timer: DelayTimer,
     pub graphics: Graphics,
     index_register: IndexRegister,
@@ -17,15 +19,19 @@ pub struct Chip8 {
     memory: Memory,
     opcode: Opcode,
     program_counter: ProgramCounter,
-    random_number_generator: Box<dyn RngCore>,
+    random_number_generator: Box<dyn Fn() -> u8>,
     sound_timer: SoundTimer,
     stack: Stack,
     stack_pointer: StackPointer,
     v_registers: VRegisters,
+    audio: Box<dyn Audio + 'audio>,
 }
 
-impl Chip8 {
-    pub fn new(random_number_generator: Box<dyn RngCore>) -> Chip8 {
+impl<'audio> Chip8<'audio> {
+    pub fn new<A>(random_number_generator: Box<dyn Fn() -> u8>, audio: A) -> Chip8<'audio>
+    where
+        A: 'audio + Audio,
+    {
         Chip8 {
             delay_timer: 0,
             graphics: [0; 2048],
@@ -39,6 +45,7 @@ impl Chip8 {
             stack: [0; 16],
             stack_pointer: 0,
             v_registers: [0; 16],
+            audio: Box::new(audio),
         }
     }
 
@@ -249,7 +256,7 @@ impl Chip8 {
             0xC000..=0xCFFF => {
                 let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                 let opcode_value = (self.opcode & 0x00FF) as u8;
-                let random_number: u8 = self.random_number_generator.gen();
+                let random_number: u8 = (self.random_number_generator)();
                 self.v_registers[vx_index] = random_number & opcode_value;
                 self.program_counter += 2;
             }
@@ -363,6 +370,7 @@ impl Chip8 {
         };
 
         self.draw();
+        self.update_timers();
     }
 
     fn load_font_set(&mut self) {
@@ -376,17 +384,14 @@ impl Chip8 {
         self.opcode = self.opcode | (self.memory[self.program_counter as usize + 1] as u16);
     }
 
-    pub fn update_timers<F>(&mut self, play_sound: F)
-    where
-        F: Fn() -> (),
-    {
+    fn update_timers(&mut self) {
         if self.delay_timer > 0 {
             self.delay_timer -= 1;
         }
 
         if self.sound_timer > 0 {
             if self.sound_timer == 1 {
-                play_sound();
+                self.audio.play();
             }
             self.sound_timer -= 1;
         }
@@ -397,12 +402,30 @@ impl Chip8 {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::{get_mock_random_number_generator, set_initial_opcode_to, TestFile};
-
     use super::*;
 
-    fn get_chip8_instance() -> Chip8 {
-        Chip8::new(get_mock_random_number_generator())
+    pub fn set_initial_opcode_to(opcode: u16, memory: &mut Memory) {
+        memory[0x200] = ((opcode & 0xFF00) >> 8) as u8;
+        memory[0x201] = (opcode & 0x00FF) as u8;
+    }
+
+    pub fn test_random_number_generator() -> u8 {
+        1
+    }
+
+    struct MockAudio;
+    impl Audio for MockAudio {
+        fn play(&self) -> () {
+            ()
+        }
+
+        fn stop(&self) -> () {
+            ()
+        }
+    }
+
+    fn get_chip8_instance<'audio>() -> Chip8<'audio> {
+        Chip8::new(Box::new(test_random_number_generator), MockAudio)
     }
 
     #[test]
@@ -779,7 +802,7 @@ mod tests {
 
         chip8.emulate_cycle(|| 1);
 
-        assert_eq!(chip8.v_registers[3], 0x3)
+        assert_eq!(chip8.v_registers[3], 0x1)
     }
 
     //0xDXYN
@@ -797,7 +820,7 @@ mod tests {
 
         chip8.emulate_cycle(|| 1);
 
-        assert_eq!(chip8.program_counter, 0x202);
+        assert_eq!(chip8.program_counter, 0x204);
     }
 
     #[test]
@@ -809,7 +832,7 @@ mod tests {
 
         chip8.emulate_cycle(|| 1);
 
-        assert_eq!(chip8.program_counter, 0x202);
+        assert_eq!(chip8.program_counter, 0x204);
     }
 
     #[test]
