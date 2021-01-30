@@ -1,4 +1,4 @@
 pub trait Audio {
-    fn play(&self) -> ();
-    fn stop(&self) -> ();
+    fn play(&self);
+    fn stop(&self);
 }

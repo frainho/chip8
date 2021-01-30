@@ -1,37 +1,60 @@
 use std::io::prelude::*;
 
 pub use audio::Audio;
-use font_set::FONT_SET;
+pub use keyboard::Keyboard;
+pub use number_generator::NumberGenerator;
 use types::{
-    DelayTimer, Graphics, IndexRegister, Keyboard, Memory, Opcode, ProgramCounter, SoundTimer,
-    Stack, StackPointer, VRegisters,
+    DelayTimer, Graphics, IndexRegister, Memory, Opcode, ProgramCounter, SoundTimer, Stack,
+    StackPointer, VRegisters,
 };
 
 mod audio;
-mod font_set;
+mod keyboard;
+mod number_generator;
 mod types;
 
-pub struct Chip8<'a> {
+pub const FONT_SET: [u8; 80] = [
+    0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+    0x20, 0x60, 0x20, 0x20, 0x70, // 1
+    0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+    0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+    0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+    0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+    0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+    0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+    0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+    0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+    0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+    0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+    0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+    0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+    0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+    0xF0, 0x80, 0xF0, 0x80, 0x80, // F
+];
+
+pub struct Chip8 {
     delay_timer: DelayTimer,
     pub graphics: Graphics,
     index_register: IndexRegister,
-    pub keyboard: Keyboard,
+    pub keyboard: types::Keyboard,
     memory: Memory,
     opcode: Opcode,
     program_counter: ProgramCounter,
-    random_number_generator: Box<dyn Fn() -> u8>,
     sound_timer: SoundTimer,
     stack: Stack,
     stack_pointer: StackPointer,
     v_registers: VRegisters,
-    audio: Box<dyn Audio + 'a>,
+    random_number_generator: Box<dyn NumberGenerator>,
+    audio_device: Box<dyn Audio>,
+    keyboard_device: Box<dyn Keyboard>,
 }
 
-impl<'a> Chip8<'a> {
-    pub fn new<A>(random_number_generator: Box<dyn Fn() -> u8>, audio: Box<A>) -> Chip8<'a>
-    where
-        A: 'a + Audio,
-    {
+impl Chip8 {
+    pub fn new(
+        random_number_generator: Box<dyn NumberGenerator>,
+        audio_device: Box<dyn Audio>,
+        keyboard_device: Box<dyn Keyboard>,
+    ) -> Chip8 {
         Chip8 {
             delay_timer: 0,
             graphics: [0; 2048],
@@ -40,12 +63,13 @@ impl<'a> Chip8<'a> {
             memory: [0; 4096],
             opcode: 0,
             program_counter: 0x200,
-            random_number_generator,
             sound_timer: 0,
             stack: [0; 16],
             stack_pointer: 0,
             v_registers: [0; 16],
-            audio,
+            random_number_generator,
+            audio_device,
+            keyboard_device,
         }
     }
 
@@ -60,10 +84,7 @@ impl<'a> Chip8<'a> {
         Ok(())
     }
 
-    pub fn emulate_cycle<F>(&mut self, mut wait_for_key_event: F)
-    where
-        F: FnMut() -> u8,
-    {
+    pub fn emulate_cycle(&mut self) -> bool {
         self.fetch_opcode();
         match self.opcode {
             0x00E0 => {
@@ -251,7 +272,7 @@ impl<'a> Chip8<'a> {
             0xC000..=0xCFFF => {
                 let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                 let opcode_value = (self.opcode & 0x00FF) as u8;
-                let random_number: u8 = (self.random_number_generator)();
+                let random_number = self.random_number_generator.generate();
                 self.v_registers[vx_index] = random_number & opcode_value;
                 self.program_counter += 2;
             }
@@ -322,7 +343,7 @@ impl<'a> Chip8<'a> {
                 }
                 0x000A => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
-                    self.v_registers[vx_index] = wait_for_key_event();
+                    self.v_registers[vx_index] = self.keyboard_device.wait_next_key_press();
                     self.program_counter += 2;
                 }
                 0x0029 => {
@@ -365,6 +386,7 @@ impl<'a> Chip8<'a> {
         };
 
         self.update_timers();
+        self.keyboard_device.update_state(&mut self.keyboard)
     }
 
     fn load_font_set(&mut self) {
@@ -385,7 +407,7 @@ impl<'a> Chip8<'a> {
 
         if self.sound_timer > 0 {
             if self.sound_timer == 1 {
-                self.audio.play();
+                self.audio_device.play();
             }
             self.sound_timer -= 1;
         }
@@ -401,27 +423,36 @@ mod tests {
         memory[0x201] = (opcode & 0x00FF) as u8;
     }
 
-    pub fn test_random_number_generator() -> u8 {
-        1
-    }
-
     struct MockAudio;
     impl Audio for MockAudio {
-        fn play(&self) -> () {
-            ()
-        }
+        fn play(&self) {}
+        fn stop(&self) {}
+    }
 
-        fn stop(&self) -> () {
-            ()
+    struct MockNumberGenerator;
+    impl NumberGenerator for MockNumberGenerator {
+        fn generate(&self) -> u8 {
+            1
         }
     }
 
-    fn get_chip8_instance<'audio>() -> Chip8<'audio> {
-        Chip8::new(Box::new(test_random_number_generator), Box::new(MockAudio))
+    struct MockKeyboardDevice;
+    impl Keyboard for MockKeyboardDevice {
+        fn wait_next_key_press(&self) -> u8 {
+            1
+        }
+
+        fn update_state(&self, keyboard: &mut types::Keyboard) -> bool {
+            todo!()
+        }
     }
 
-    fn wait_for_key_event() -> u8 {
-        1
+    fn get_chip8_instance() -> Chip8 {
+        Chip8::new(
+            Box::new(MockNumberGenerator),
+            Box::new(MockAudio),
+            Box::new(MockKeyboardDevice),
+        )
     }
 
     #[test]
@@ -467,7 +498,7 @@ mod tests {
         chip8.memory[0x200] = 0x10;
         chip8.memory[0x201] = 0x20;
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.opcode, 4128);
     }
@@ -480,7 +511,7 @@ mod tests {
         chip8.delay_timer = 1;
         chip8.sound_timer = 1;
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.delay_timer, 0);
         assert_eq!(chip8.sound_timer, 0);
@@ -488,7 +519,7 @@ mod tests {
         chip8.memory[0x202] = 0x00;
         chip8.memory[0x203] = 0xE0;
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.delay_timer, 0);
         assert_eq!(chip8.sound_timer, 0);
@@ -501,7 +532,7 @@ mod tests {
         chip8.graphics[2] = 98;
         set_initial_opcode_to(0x00E0, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.graphics, [0u8; 2048]);
     }
@@ -511,7 +542,7 @@ mod tests {
         let mut chip8 = get_chip8_instance();
         set_initial_opcode_to(0x2010, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.stack[0], 0x200);
         assert_eq!(chip8.stack_pointer, 1);
@@ -527,7 +558,7 @@ mod tests {
 
         set_initial_opcode_to(0x00EE, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.stack_pointer, 0);
         assert_eq!(chip8.program_counter, 0x125);
@@ -539,7 +570,7 @@ mod tests {
 
         set_initial_opcode_to(0x176C, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x76C);
     }
@@ -552,7 +583,7 @@ mod tests {
 
         set_initial_opcode_to(0x326C, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x204);
     }
@@ -565,7 +596,7 @@ mod tests {
 
         set_initial_opcode_to(0x426C, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x204);
     }
@@ -579,7 +610,7 @@ mod tests {
 
         set_initial_opcode_to(0x5230, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x204);
     }
@@ -592,7 +623,7 @@ mod tests {
 
         set_initial_opcode_to(0x86A6, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[6], 0b00000001);
         assert_eq!(chip8.v_registers[15], 0b1);
@@ -607,7 +638,7 @@ mod tests {
 
         set_initial_opcode_to(0x8457, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[4], 0xF);
         assert_eq!(chip8.v_registers[15], 0);
@@ -622,7 +653,7 @@ mod tests {
 
         set_initial_opcode_to(0x8457, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[4], 0xF1);
         assert_eq!(chip8.v_registers[15], 1);
@@ -636,7 +667,7 @@ mod tests {
 
         set_initial_opcode_to(0x812E, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[15usize], 1);
         assert_eq!(chip8.v_registers[1], 0);
@@ -651,7 +682,7 @@ mod tests {
 
         set_initial_opcode_to(0x9AB0, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x204);
     }
@@ -665,7 +696,7 @@ mod tests {
 
         set_initial_opcode_to(0x9AB0, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x202);
     }
@@ -676,7 +707,7 @@ mod tests {
 
         set_initial_opcode_to(0xA111, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.index_register, 0x111);
     }
@@ -687,7 +718,7 @@ mod tests {
         chip8.v_registers[4] = 0xF;
         set_initial_opcode_to(0x6423, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[4], 0x23);
     }
@@ -698,7 +729,7 @@ mod tests {
         chip8.v_registers[1] = 0x10;
         set_initial_opcode_to(0x7110, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[1], 0x20);
     }
@@ -710,7 +741,7 @@ mod tests {
         chip8.v_registers[2] = 0x20;
         set_initial_opcode_to(0x8120, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[1], 0x20);
     }
@@ -722,7 +753,7 @@ mod tests {
         chip8.v_registers[7] = 0x20;
         set_initial_opcode_to(0x8671, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[6], 0x30);
     }
@@ -734,7 +765,7 @@ mod tests {
         chip8.v_registers[9] = 0x10;
         set_initial_opcode_to(0x8892, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[8], 0x10);
     }
@@ -746,7 +777,7 @@ mod tests {
         chip8.v_registers[8] = 0x15;
         set_initial_opcode_to(0x8783, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[7], 0x67);
     }
@@ -758,7 +789,7 @@ mod tests {
         chip8.v_registers[1] = 0x64;
         set_initial_opcode_to(0x8014, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         // Overflowing add of 200 + 100 = 44
         assert_eq!(chip8.v_registers[0], 0x2C);
@@ -772,7 +803,7 @@ mod tests {
         chip8.v_registers[1] = 0xD2;
         set_initial_opcode_to(0x8015, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[0], 0xFF);
         assert_eq!(chip8.v_registers[15usize], 1);
@@ -785,7 +816,7 @@ mod tests {
         chip8.v_registers[0] = 0x1;
         set_initial_opcode_to(0xB100, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x301);
     }
@@ -796,7 +827,7 @@ mod tests {
 
         set_initial_opcode_to(0xC313, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[3], 0x1)
     }
@@ -814,7 +845,7 @@ mod tests {
         chip8.keyboard[8] = 1;
         set_initial_opcode_to(0xE59E, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x204);
     }
@@ -826,7 +857,7 @@ mod tests {
         chip8.keyboard[6] = 0;
         set_initial_opcode_to(0xE3A1, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.program_counter, 0x204);
     }
@@ -842,7 +873,7 @@ mod tests {
         chip8.delay_timer = 40;
         set_initial_opcode_to(0xF307, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[3], 40);
     }
@@ -853,7 +884,7 @@ mod tests {
         chip8.v_registers[5] = 100;
         set_initial_opcode_to(0xF515, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.delay_timer, 99);
     }
@@ -864,7 +895,7 @@ mod tests {
         chip8.v_registers[3] = 10;
         set_initial_opcode_to(0xF318, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.sound_timer, 9);
     }
@@ -876,7 +907,7 @@ mod tests {
         chip8.index_register = 0x01;
         set_initial_opcode_to(0xF81E, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.index_register, 0x11);
     }
@@ -887,7 +918,7 @@ mod tests {
         chip8.v_registers[1] = 10;
         set_initial_opcode_to(0xF129, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.index_register, 10);
     }
@@ -899,7 +930,7 @@ mod tests {
         chip8.index_register = 0x203;
         set_initial_opcode_to(0xF933, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.memory[chip8.index_register as usize], 1);
         assert_eq!(chip8.memory[(chip8.index_register + 1) as usize], 2);
@@ -914,7 +945,7 @@ mod tests {
         chip8.index_register = 0x204;
         set_initial_opcode_to(0xF355, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(
             chip8.memory[chip8.index_register as usize..=chip8.index_register as usize + 3],
@@ -932,7 +963,7 @@ mod tests {
         chip8.memory[chip8.index_register as usize + 3] = 104;
         set_initial_opcode_to(0xF365, &mut chip8.memory);
 
-        chip8.emulate_cycle(Box::new(wait_for_key_event));
+        chip8.emulate_cycle();
 
         assert_eq!(chip8.v_registers[0..=3], [101, 102, 103, 104]);
     }
