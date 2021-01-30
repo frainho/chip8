@@ -3,15 +3,10 @@ use std::io::prelude::*;
 pub use audio::Audio;
 pub use keyboard::Keyboard;
 pub use number_generator::NumberGenerator;
-use types::{
-    DelayTimer, Graphics, IndexRegister, Memory, Opcode, ProgramCounter, SoundTimer, Stack,
-    StackPointer, VRegisters,
-};
 
 mod audio;
 mod keyboard;
 mod number_generator;
-mod types;
 
 pub const FONT_SET: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -33,17 +28,17 @@ pub const FONT_SET: [u8; 80] = [
 ];
 
 pub struct Chip8 {
-    delay_timer: DelayTimer,
-    pub graphics: Graphics,
-    index_register: IndexRegister,
-    pub keyboard: types::Keyboard,
-    memory: Memory,
-    opcode: Opcode,
-    program_counter: ProgramCounter,
-    sound_timer: SoundTimer,
-    stack: Stack,
-    stack_pointer: StackPointer,
-    v_registers: VRegisters,
+    delay_timer: u8,
+    pub graphics: [u8; 2048],
+    index_register: u16,
+    keyboard: [u8; 16],
+    memory: [u8; 4096],
+    opcode: u16,
+    program_counter: u16,
+    sound_timer: u8,
+    stack: [u16; 16],
+    stack_pointer: u16,
+    v_registers: [u8; 16],
     random_number_generator: Box<dyn NumberGenerator>,
     audio_device: Box<dyn Audio>,
     keyboard_device: Box<dyn Keyboard>,
@@ -163,24 +158,21 @@ impl Chip8 {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                     let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
 
-                    self.v_registers[vx_index] =
-                        self.v_registers[vx_index] | self.v_registers[vy_index];
+                    self.v_registers[vx_index] |= self.v_registers[vy_index];
                     self.program_counter += 2;
                 }
                 0x0002 => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                     let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
 
-                    self.v_registers[vx_index] =
-                        self.v_registers[vx_index] & self.v_registers[vy_index];
+                    self.v_registers[vx_index] &= self.v_registers[vy_index];
                     self.program_counter += 2;
                 }
                 0x0003 => {
                     let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
                     let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
 
-                    self.v_registers[vx_index] =
-                        self.v_registers[vx_index] ^ self.v_registers[vy_index];
+                    self.v_registers[vx_index] ^= self.v_registers[vy_index];
                     self.program_counter += 2;
                 }
                 0x0004 => {
@@ -390,14 +382,14 @@ impl Chip8 {
     }
 
     fn load_font_set(&mut self) {
-        for i in 0..80usize {
+        for (i, _) in FONT_SET.iter().enumerate() {
             self.memory[i] = FONT_SET[i];
         }
     }
 
     fn fetch_opcode(&mut self) {
         self.opcode = (self.memory[self.program_counter as usize] as u16) << 8;
-        self.opcode = self.opcode | (self.memory[self.program_counter as usize + 1] as u16);
+        self.opcode |= self.memory[self.program_counter as usize + 1] as u16;
     }
 
     fn update_timers(&mut self) {
@@ -418,7 +410,7 @@ impl Chip8 {
 mod tests {
     use super::*;
 
-    pub fn set_initial_opcode_to(opcode: u16, memory: &mut Memory) {
+    pub fn set_initial_opcode_to(opcode: u16, memory: &mut [u8; 4096]) {
         memory[0x200] = ((opcode & 0xFF00) >> 8) as u8;
         memory[0x201] = (opcode & 0x00FF) as u8;
     }
@@ -442,7 +434,7 @@ mod tests {
             1
         }
 
-        fn update_state(&mut self, keyboard: &mut types::Keyboard) -> bool {
+        fn update_state(&mut self, _keyboard: &mut [u8; 16]) -> bool {
             todo!()
         }
     }

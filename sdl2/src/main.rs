@@ -1,5 +1,4 @@
 use number_generator::RandomNumberGenerator;
-use sdl2::{event::Event, keyboard::Keycode};
 use std::{error::Error, thread, time::Duration};
 
 mod audio;
