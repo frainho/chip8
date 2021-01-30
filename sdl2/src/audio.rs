@@ -29,12 +29,12 @@ impl SdlAudio {
 }
 
 impl Audio for SdlAudio {
-    fn play(&self) -> () {
-        todo!()
+    fn play(&self) {
+        self.audio_device.resume();
     }
 
-    fn stop(&self) -> () {
-        todo!()
+    fn stop(&self) {
+        self.audio_device.pause();
     }
 }
 

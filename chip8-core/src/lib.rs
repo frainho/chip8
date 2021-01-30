@@ -438,11 +438,11 @@ mod tests {
 
     struct MockKeyboardDevice;
     impl Keyboard for MockKeyboardDevice {
-        fn wait_next_key_press(&self) -> u8 {
+        fn wait_next_key_press(&mut self) -> u8 {
             1
         }
 
-        fn update_state(&self, keyboard: &mut types::Keyboard) -> bool {
+        fn update_state(&mut self, keyboard: &mut types::Keyboard) -> bool {
             todo!()
         }
     }
