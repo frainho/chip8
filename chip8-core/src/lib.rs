@@ -1,12 +1,8 @@
+mod traits;
+
 use std::io::prelude::*;
 
-pub use audio::Audio;
-pub use keyboard::Keyboard;
-pub use number_generator::NumberGenerator;
-
-mod audio;
-mod keyboard;
-mod number_generator;
+pub use traits::{Audio, Graphics, Keyboard, NumberGenerator};
 
 pub const FONT_SET: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -42,6 +38,7 @@ pub struct Chip8 {
     random_number_generator: Box<dyn NumberGenerator>,
     audio_device: Box<dyn Audio>,
     keyboard_device: Box<dyn Keyboard>,
+    graphics_device: Box<dyn Graphics>,
 }
 
 impl Chip8 {
@@ -49,6 +46,7 @@ impl Chip8 {
         random_number_generator: Box<dyn NumberGenerator>,
         audio_device: Box<dyn Audio>,
         keyboard_device: Box<dyn Keyboard>,
+        graphics_device: Box<dyn Graphics>,
     ) -> Chip8 {
         Chip8 {
             delay_timer: 0,
@@ -65,6 +63,7 @@ impl Chip8 {
             random_number_generator,
             audio_device,
             keyboard_device,
+            graphics_device,
         }
     }
 
@@ -377,6 +376,7 @@ impl Chip8 {
             _ => panic!("Invalid opcode: {:x}", self.opcode),
         };
 
+        self.graphics_device.draw(&self.graphics);
         self.update_timers();
         self.keyboard_device.update_state(&mut self.keyboard)
     }
@@ -435,8 +435,13 @@ mod tests {
         }
 
         fn update_state(&mut self, _keyboard: &mut [u8; 16]) -> bool {
-            todo!()
+            true
         }
+    }
+
+    struct MockGraphicsDevice;
+    impl Graphics for MockGraphicsDevice {
+        fn draw(&mut self, _graphics: &[u8]) {}
     }
 
     fn get_chip8_instance() -> Chip8 {
@@ -444,6 +449,7 @@ mod tests {
             Box::new(MockNumberGenerator),
             Box::new(MockAudio),
             Box::new(MockKeyboardDevice),
+            Box::new(MockGraphicsDevice),
         )
     }
 

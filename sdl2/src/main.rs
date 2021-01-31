@@ -17,13 +17,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sdl_context = sdl2::init()?;
 
     let sdl_audio = SdlAudio::new(&sdl_context)?;
-    let mut sdl_graphics = SdlGraphics::new(&sdl_context)?;
+    let sdl_graphics = SdlGraphics::new(&sdl_context)?;
     let sdl_keyboard = SdlKeyboard::new(&sdl_context)?;
 
     let mut chip8 = Chip8::new(
         Box::new(RandomNumberGenerator),
         Box::new(sdl_audio),
         Box::new(sdl_keyboard),
+        Box::new(sdl_graphics),
     );
     chip8.initialize();
 
@@ -34,8 +35,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let true = chip8.emulate_cycle() {
             break 'main;
         };
-
-        sdl_graphics.draw(&chip8.graphics)?;
 
         // 500hz
         thread::sleep(Duration::from_millis(2));
