@@ -23,6 +23,11 @@ pub const FONT_SET: [u8; 80] = [
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 ];
 
+pub enum State {
+    Continue,
+    Exit,
+}
+
 pub struct Chip8 {
     delay_timer: u8,
     pub graphics: [u8; 2048],
@@ -48,7 +53,7 @@ impl Chip8 {
         keyboard_device: Box<dyn Keyboard>,
         graphics_device: Box<dyn Graphics>,
     ) -> Chip8 {
-        Chip8 {
+        let mut chip8 = Chip8 {
             delay_timer: 0,
             graphics: [0; 2048],
             index_register: 0,
@@ -64,11 +69,9 @@ impl Chip8 {
             audio_device,
             keyboard_device,
             graphics_device,
-        }
-    }
-
-    pub fn initialize(&mut self) {
-        self.load_font_set();
+        };
+        chip8.load_font_set();
+        chip8
     }
 
     pub fn load_program(&mut self, rom_data: Vec<u8>) -> Result<(), std::io::Error> {
@@ -78,7 +81,7 @@ impl Chip8 {
         Ok(())
     }
 
-    pub fn emulate_cycle(&mut self) -> bool {
+    pub fn emulate_cycle(&mut self) -> State {
         self.fetch_opcode();
         match self.opcode {
             0x00E0 => {
@@ -378,7 +381,11 @@ impl Chip8 {
 
         self.graphics_device.draw(&self.graphics);
         self.update_timers();
-        self.keyboard_device.update_state(&mut self.keyboard)
+
+        match self.keyboard_device.update_state(&mut self.keyboard) {
+            true => State::Exit,
+            false => State::Continue,
+        }
     }
 
     fn load_font_set(&mut self) {
@@ -461,7 +468,6 @@ mod tests {
         assert_eq!(chip8.program_counter, 0x200);
         assert_eq!(chip8.index_register, 0);
         assert_eq!(chip8.stack_pointer, 0);
-        assert_eq!(chip8.memory, [0; 4096]);
         assert_eq!(chip8.graphics, [0; 2048]);
         assert_eq!(chip8.v_registers, [0; 16]);
         assert_eq!(chip8.stack, [0; 16]);
@@ -471,9 +477,7 @@ mod tests {
 
     #[test]
     fn it_loads_the_font_set_on_initialization() {
-        let mut chip8 = get_chip8_instance();
-
-        chip8.initialize();
+        let chip8 = get_chip8_instance();
 
         assert_eq!(&chip8.memory[0..80], FONT_SET);
     }

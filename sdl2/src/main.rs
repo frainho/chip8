@@ -8,7 +8,7 @@ mod number_generator;
 mod rom_loader;
 
 use audio::SdlAudio;
-use chip8_core::Chip8;
+use chip8_core::{Chip8, State};
 use graphics::SdlGraphics;
 use keyboard::SdlKeyboard;
 use rom_loader::RomLoader;
@@ -26,13 +26,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         Box::new(sdl_keyboard),
         Box::new(sdl_graphics),
     );
-    chip8.initialize();
-
     let rom_data = RomLoader::load_rom("Space Invaders.ch8")?;
     chip8.load_program(rom_data)?;
 
     'main: loop {
-        if let true = chip8.emulate_cycle() {
+        if let State::Exit = chip8.emulate_cycle() {
             break 'main;
         };
 
