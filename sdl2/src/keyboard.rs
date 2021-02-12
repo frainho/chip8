@@ -24,52 +24,50 @@ impl Keyboard for SdlKeyboard {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => return true,
-                Event::KeyDown { keycode, .. } => {
-                    if let Some(keycode) = keycode {
-                        match keycode {
-                            Keycode::Num1 => keyboard[0] = 1,
-                            Keycode::Num2 => keyboard[1] = 1,
-                            Keycode::Num3 => keyboard[2] = 1,
-                            Keycode::Num4 => keyboard[3] = 1,
-                            Keycode::Q => keyboard[4] = 1,
-                            Keycode::W => keyboard[5] = 1,
-                            Keycode::E => keyboard[6] = 1,
-                            Keycode::R => keyboard[7] = 1,
-                            Keycode::A => keyboard[8] = 1,
-                            Keycode::S => keyboard[9] = 1,
-                            Keycode::D => keyboard[10] = 1,
-                            Keycode::F => keyboard[11] = 1,
-                            Keycode::Z => keyboard[12] = 1,
-                            Keycode::X => keyboard[13] = 1,
-                            Keycode::C => keyboard[14] = 1,
-                            Keycode::V => keyboard[15] = 1,
-                            _ => (),
-                        }
-                    }
-                }
-                Event::KeyUp { keycode, .. } => {
-                    if let Some(keycode) = keycode {
-                        match keycode {
-                            Keycode::Num1 => keyboard[0] = 0,
-                            Keycode::Num2 => keyboard[1] = 0,
-                            Keycode::Num3 => keyboard[2] = 0,
-                            Keycode::Num4 => keyboard[3] = 0,
-                            Keycode::Q => keyboard[4] = 0,
-                            Keycode::W => keyboard[5] = 0,
-                            Keycode::E => keyboard[6] = 0,
-                            Keycode::R => keyboard[7] = 0,
-                            Keycode::A => keyboard[8] = 0,
-                            Keycode::S => keyboard[9] = 0,
-                            Keycode::D => keyboard[10] = 0,
-                            Keycode::F => keyboard[11] = 0,
-                            Keycode::Z => keyboard[12] = 0,
-                            Keycode::X => keyboard[13] = 0,
-                            Keycode::C => keyboard[14] = 0,
-                            Keycode::V => keyboard[15] = 0,
-                            _ => (),
-                        }
-                    }
-                }
+                Event::KeyDown {
+                    keycode: Some(keycode),
+                    ..
+                } => match keycode {
+                    Keycode::Num1 => keyboard[0] = 1,
+                    Keycode::Num2 => keyboard[1] = 1,
+                    Keycode::Num3 => keyboard[2] = 1,
+                    Keycode::Num4 => keyboard[3] = 1,
+                    Keycode::Q => keyboard[4] = 1,
+                    Keycode::W => keyboard[5] = 1,
+                    Keycode::E => keyboard[6] = 1,
+                    Keycode::R => keyboard[7] = 1,
+                    Keycode::A => keyboard[8] = 1,
+                    Keycode::S => keyboard[9] = 1,
+                    Keycode::D => keyboard[10] = 1,
+                    Keycode::F => keyboard[11] = 1,
+                    Keycode::Z => keyboard[12] = 1,
+                    Keycode::X => keyboard[13] = 1,
+                    Keycode::C => keyboard[14] = 1,
+                    Keycode::V => keyboard[15] = 1,
+                    _ => (),
+                },
+                Event::KeyUp {
+                    keycode: Some(keycode),
+                    ..
+                } => match keycode {
+                    Keycode::Num1 => keyboard[0] = 0,
+                    Keycode::Num2 => keyboard[1] = 0,
+                    Keycode::Num3 => keyboard[2] = 0,
+                    Keycode::Num4 => keyboard[3] = 0,
+                    Keycode::Q => keyboard[4] = 0,
+                    Keycode::W => keyboard[5] = 0,
+                    Keycode::E => keyboard[6] = 0,
+                    Keycode::R => keyboard[7] = 0,
+                    Keycode::A => keyboard[8] = 0,
+                    Keycode::S => keyboard[9] = 0,
+                    Keycode::D => keyboard[10] = 0,
+                    Keycode::F => keyboard[11] = 0,
+                    Keycode::Z => keyboard[12] = 0,
+                    Keycode::X => keyboard[13] = 0,
+                    Keycode::C => keyboard[14] = 0,
+                    Keycode::V => keyboard[15] = 0,
+                    _ => (),
+                },
                 _ => (),
             }
         }
