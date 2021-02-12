@@ -1,7 +1,9 @@
+mod errors;
 mod traits;
 
 use std::io::prelude::*;
 
+pub use errors::Chip8Error;
 pub use traits::{Audio, Graphics, Keyboard, NumberGenerator};
 
 pub const FONT_SET: [u8; 80] = [
@@ -74,26 +76,28 @@ impl Chip8 {
         chip8
     }
 
-    pub fn load_program(&mut self, rom_data: Vec<u8>) -> Result<(), std::io::Error> {
+    pub fn load_program(&mut self, rom_data: Vec<u8>) -> Result<(), Chip8Error> {
         let mut program_memory = &mut self.memory[self.program_counter as usize..];
         program_memory.write_all(&rom_data)?;
 
         Ok(())
     }
 
-    pub fn emulate_cycle(&mut self) -> State {
+    pub fn emulate_cycle(&mut self) -> Result<State, Chip8Error> {
         self.fetch_opcode();
-        self.interpret_opcode();
-        self.graphics_device.draw(&self.graphics);
-        self.update_timers();
+        self.interpret_opcode()?;
+        self.graphics_device.draw(&self.graphics)?;
+        self.update_timers()?;
 
-        match self.keyboard_device.update_state(&mut self.keyboard) {
+        let state = match self.keyboard_device.update_state(&mut self.keyboard) {
             true => State::Exit,
             false => State::Continue,
-        }
+        };
+
+        Ok(state)
     }
 
-    fn interpret_opcode(&mut self) {
+    fn interpret_opcode(&mut self) -> Result<(), Chip8Error> {
         let leading_opcode_number = ((self.opcode & 0xF000) >> 12) as usize;
         let vx_index = ((self.opcode & 0x0F00) >> 8) as usize;
         let vy_index = ((self.opcode & 0x00F0) >> 4) as usize;
@@ -121,17 +125,17 @@ impl Chip8 {
                 0x0006 => self.store_lsb_of_vx_in_vf_shifting_vx_by_1(vx_index),
                 0x0007 => self.set_vx_to_vy_minus_vx_setting_vf_on_borrow(vx_index, vy_index),
                 0x000E => self.store_msb_of_vx_in_vf_shifting_vx_by_1(vx_index),
-                _ => panic!("Invalid opcode: {:x}", self.opcode),
+                _ => return Err(Chip8Error::InvalidOpcode(self.opcode)),
             },
             0x9000..=0x9FFF => self.skip_instruction_if_vx_not_equals_vy(vx_index, vy_index),
             0xA000..=0xAFFF => self.set_index_register_to_nnn(nnn_address),
             0xB000..=0xBFFF => self.jump_to_address_nnn_plus_v0(nnn_address),
-            0xC000..=0xCFFF => self.set_vx_to_random_number_bitwise_and_nn(vx_index, nn_address),
+            0xC000..=0xCFFF => self.set_vx_to_random_number_bitwise_and_nn(vx_index, nn_address)?,
             0xD000..=0xDFFF => self.set_graphics(vx_index, vy_index, n_address),
             0xE000..=0xEFFF => match nn_address {
                 0x009E => self.skips_instruction_if_vx_key_is_pressed(vx_index),
                 0x00A1 => self.skips_instruction_if_vx_key_is_not_pressed(vx_index),
-                _ => panic!("Invalid opcode: {:x}", self.opcode),
+                _ => return Err(Chip8Error::InvalidOpcode(self.opcode)),
             },
             0xF000..=0xFFFF => match nn_address {
                 0x0007 => self.sets_vx_to_delay_timer(vx_index),
@@ -143,15 +147,17 @@ impl Chip8 {
                 0x0033 => self.store_bcd_of_vx_from_i(vx_index),
                 0x0055 => self.stores_v0_to_vx_in_memory_from_i(vx_index),
                 0x0065 => self.writes_v0_to_vx_from_memory_i(vx_index),
-                _ => panic!("Invalid opcode: {:x}", self.opcode),
+                _ => return Err(Chip8Error::InvalidOpcode(self.opcode)),
             },
-            _ => panic!("Invalid opcode: {:x}", self.opcode),
+            _ => return Err(Chip8Error::InvalidOpcode(self.opcode)),
         };
 
         let jumping_operations = [0x1usize, 0x2, 0xB];
         if !jumping_operations.contains(&leading_opcode_number) {
             self.program_counter += 2;
         }
+
+        Ok(())
     }
 
     fn clear_display(&mut self) {
@@ -233,10 +239,15 @@ impl Chip8 {
         self.program_counter += value_to_add + v0_value;
     }
 
-    fn set_vx_to_random_number_bitwise_and_nn(&mut self, vx_index: usize, nn_address: u16) {
+    fn set_vx_to_random_number_bitwise_and_nn(
+        &mut self,
+        vx_index: usize,
+        nn_address: u16,
+    ) -> Result<(), Chip8Error> {
         let opcode_value = nn_address as u8;
-        let random_number = self.random_number_generator.generate();
+        let random_number = self.random_number_generator.generate()?;
         self.v_registers[vx_index] = random_number & opcode_value;
+        Ok(())
     }
 
     fn set_graphics(&mut self, vx_index: usize, vy_index: usize, n_address: u16) {
@@ -404,17 +415,18 @@ impl Chip8 {
         self.opcode |= self.memory[self.program_counter as usize + 1] as u16;
     }
 
-    fn update_timers(&mut self) {
+    fn update_timers(&mut self) -> Result<(), Chip8Error> {
         if self.delay_timer > 0 {
             self.delay_timer -= 1;
         }
 
         if self.sound_timer > 0 {
             if self.sound_timer == 1 {
-                self.audio_device.play();
+                self.audio_device.play()?;
             }
             self.sound_timer -= 1;
         }
+        Ok(())
     }
 }
 
@@ -429,14 +441,19 @@ mod tests {
 
     struct MockAudio;
     impl Audio for MockAudio {
-        fn play(&self) {}
-        fn stop(&self) {}
+        fn play(&self) -> Result<(), Chip8Error> {
+            Ok(())
+        }
+
+        fn stop(&self) -> Result<(), Chip8Error> {
+            Ok(())
+        }
     }
 
     struct MockNumberGenerator;
     impl NumberGenerator for MockNumberGenerator {
-        fn generate(&self) -> u8 {
-            1
+        fn generate(&self) -> Result<u8, Chip8Error> {
+            Ok(1)
         }
     }
 
@@ -453,7 +470,9 @@ mod tests {
 
     struct MockGraphicsDevice;
     impl Graphics for MockGraphicsDevice {
-        fn draw(&mut self, _graphics: &[u8]) {}
+        fn draw(&mut self, _graphics: &[u8]) -> Result<(), Chip8Error> {
+            Ok(())
+        }
     }
 
     fn get_chip8_instance() -> Chip8 {
@@ -500,25 +519,26 @@ mod tests {
     // }
 
     #[test]
-    fn it_fetches_correct_opcode_when_emulating_the_first_cycle() {
+    fn it_fetches_correct_opcode_when_emulating_the_first_cycle() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.memory[0x200] = 0x10;
         chip8.memory[0x201] = 0x20;
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.opcode, 4128);
+        Ok(())
     }
 
     #[test]
-    fn it_correctly_counts_down_the_timers() {
+    fn it_correctly_counts_down_the_timers() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         set_initial_opcode_to(0x00E0, &mut chip8.memory);
 
         chip8.delay_timer = 1;
         chip8.sound_timer = 1;
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.delay_timer, 0);
         assert_eq!(chip8.sound_timer, 0);
@@ -526,38 +546,44 @@ mod tests {
         chip8.memory[0x202] = 0x00;
         chip8.memory[0x203] = 0xE0;
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.delay_timer, 0);
         assert_eq!(chip8.sound_timer, 0);
+
+        Ok(())
     }
 
     #[test]
-    fn it_clears_the_display() {
+    fn it_clears_the_display() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.graphics[1] = 69;
         chip8.graphics[2] = 98;
         set_initial_opcode_to(0x00E0, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.graphics, [0u8; 2048]);
+
+        Ok(())
     }
 
     #[test]
-    fn it_calls_the_subroutine_at_the_correct_address() {
+    fn it_calls_the_subroutine_at_the_correct_address() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         set_initial_opcode_to(0x2010, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.stack[0], 0x200);
         assert_eq!(chip8.stack_pointer, 1);
         assert_eq!(chip8.program_counter, 0x010);
+
+        Ok(())
     }
 
     #[test]
-    fn it_returns_from_a_subroutine() {
+    fn it_returns_from_a_subroutine() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
 
         chip8.stack[0] = 0x123;
@@ -565,51 +591,59 @@ mod tests {
 
         set_initial_opcode_to(0x00EE, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.stack_pointer, 0);
         assert_eq!(chip8.program_counter, 0x125);
+
+        Ok(())
     }
 
     #[test]
-    fn it_jumps_to_the_correct_address() {
+    fn it_jumps_to_the_correct_address() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
 
         set_initial_opcode_to(0x176C, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.program_counter, 0x76C);
+
+        Ok(())
     }
 
     #[test]
-    fn it_skips_the_next_instruction_if_vx_equals_nn() {
+    fn it_skips_the_next_instruction_if_vx_equals_nn() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[2] = 0x6C;
         chip8.program_counter = 0x200;
 
         set_initial_opcode_to(0x326C, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.program_counter, 0x204);
+
+        Ok(())
     }
 
     #[test]
-    fn it_skips_the_next_instruction_if_vx_not_equals_nn() {
+    fn it_skips_the_next_instruction_if_vx_not_equals_nn() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[2] = 0x6A;
         chip8.program_counter = 0x200;
 
         set_initial_opcode_to(0x426C, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.program_counter, 0x204);
+
+        Ok(())
     }
 
     #[test]
-    fn it_skips_the_next_instruction_if_vx_equals_vy() {
+    fn it_skips_the_next_instruction_if_vx_equals_vy() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[2] = 0x6A;
         chip8.v_registers[3] = 0x6A;
@@ -617,27 +651,32 @@ mod tests {
 
         set_initial_opcode_to(0x5230, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.program_counter, 0x204);
+
+        Ok(())
     }
 
     #[test]
-    fn it_stores_the_least_significant_bit_of_vx_in_vf_and_shifts_vx_to_the_right_by_1() {
+    fn it_stores_the_least_significant_bit_of_vx_in_vf_and_shifts_vx_to_the_right_by_1(
+    ) -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[6] = 0b00000011;
 
         set_initial_opcode_to(0x86A6, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[6], 0b00000001);
         assert_eq!(chip8.v_registers[15], 0b1);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_vx_to_vy_minus_vx_vf_is_set_to_0_when_there_is_a_borrow() {
+    fn it_sets_vx_to_vy_minus_vx_vf_is_set_to_0_when_there_is_a_borrow() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[4] = 0x20;
@@ -645,14 +684,17 @@ mod tests {
 
         set_initial_opcode_to(0x8457, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[4], 0xF);
         assert_eq!(chip8.v_registers[15], 0);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_vx_to_vy_minus_vx_vf_is_set_to_1_when_there_isnt_a_borrow() {
+    fn it_sets_vx_to_vy_minus_vx_vf_is_set_to_1_when_there_isnt_a_borrow() -> Result<(), Chip8Error>
+    {
         let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[4] = 0x11;
@@ -660,28 +702,32 @@ mod tests {
 
         set_initial_opcode_to(0x8457, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[4], 0xF1);
         assert_eq!(chip8.v_registers[15], 1);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_vf_to_the_value_of_vx_msb_shifts_vx_left_by_1() {
+    fn it_sets_vf_to_the_value_of_vx_msb_shifts_vx_left_by_1() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[1] = 0b10000000;
 
         set_initial_opcode_to(0x812E, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[15usize], 1);
         assert_eq!(chip8.v_registers[1], 0);
+
+        Ok(())
     }
 
     #[test]
-    fn it_skips_the_next_instruction_if_vx_not_equals_vy() {
+    fn it_skips_the_next_instruction_if_vx_not_equals_vy() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[10] = 0x11;
@@ -689,13 +735,15 @@ mod tests {
 
         set_initial_opcode_to(0x9AB0, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.program_counter, 0x204);
+
+        Ok(())
     }
 
     #[test]
-    fn it_doesnt_skip_the_next_instruction_if_vx_equals_vy() {
+    fn it_doesnt_skip_the_next_instruction_if_vx_equals_vy() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[10] = 0x11;
@@ -703,140 +751,165 @@ mod tests {
 
         set_initial_opcode_to(0x9AB0, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.program_counter, 0x202);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_the_index_register_value() {
+    fn it_sets_the_index_register_value() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
 
         set_initial_opcode_to(0xA111, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.index_register, 0x111);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_the_value_of_vx() {
+    fn it_sets_the_value_of_vx() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[4] = 0xF;
         set_initial_opcode_to(0x6423, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[4], 0x23);
+
+        Ok(())
     }
 
     #[test]
-    fn it_adds_the_value_to_vx() {
+    fn it_adds_the_value_to_vx() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[1] = 0x10;
         set_initial_opcode_to(0x7110, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[1], 0x20);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_the_value_of_vx_to_vy() {
+    fn it_sets_the_value_of_vx_to_vy() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[1] = 0x10;
         chip8.v_registers[2] = 0x20;
         set_initial_opcode_to(0x8120, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[1], 0x20);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_the_value_of_vx_to_vx_bitwise_or_vy() {
+    fn it_sets_the_value_of_vx_to_vx_bitwise_or_vy() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[6] = 0x10;
         chip8.v_registers[7] = 0x20;
         set_initial_opcode_to(0x8671, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[6], 0x30);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_the_value_of_vx_to_vx_bitwise_and_vy() {
+    fn it_sets_the_value_of_vx_to_vx_bitwise_and_vy() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[8] = 0xFF;
         chip8.v_registers[9] = 0x10;
         set_initial_opcode_to(0x8892, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[8], 0x10);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_the_value_of_vx_to_vx_bitwise_xor_vy() {
+    fn it_sets_the_value_of_vx_to_vx_bitwise_xor_vy() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[7] = 0x72;
         chip8.v_registers[8] = 0x15;
         set_initial_opcode_to(0x8783, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[7], 0x67);
+
+        Ok(())
     }
 
     #[test]
-    fn it_adds_the_value_of_vy_to_vx_setting_vf_when_there_is_a_carry() {
+    fn it_adds_the_value_of_vy_to_vx_setting_vf_when_there_is_a_carry() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[0] = 0xC8;
         chip8.v_registers[1] = 0x64;
         set_initial_opcode_to(0x8014, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         // Overflowing add of 200 + 100 = 44
         assert_eq!(chip8.v_registers[0], 0x2C);
         assert_eq!(chip8.v_registers[15usize], 1);
+
+        Ok(())
     }
 
     #[test]
-    fn it_subtracts_the_value_of_vy_of_vf_setting_vf_then_there_is_a_borrow() {
+    fn it_subtracts_the_value_of_vy_of_vf_setting_vf_then_there_is_a_borrow(
+    ) -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[0] = 0xD1;
         chip8.v_registers[1] = 0xD2;
         set_initial_opcode_to(0x8015, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[0], 0xFF);
         assert_eq!(chip8.v_registers[15usize], 1);
+
+        Ok(())
     }
 
     #[test]
-    fn it_jumps_to_the_address_nnn_plus_vx0() {
+    fn it_jumps_to_the_address_nnn_plus_vx0() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
 
         chip8.v_registers[0] = 0x1;
         set_initial_opcode_to(0xB100, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.program_counter, 0x301);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_vx_to_random_number_bitwise_and_nn() {
+    fn it_sets_vx_to_random_number_bitwise_and_nn() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
 
         set_initial_opcode_to(0xC313, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
-        assert_eq!(chip8.v_registers[3], 0x1)
+        assert_eq!(chip8.v_registers[3], 0x1);
+
+        Ok(())
     }
 
     //0xDXYN
@@ -846,27 +919,31 @@ mod tests {
     }
 
     #[test]
-    fn it_skips_instruction_if_key_press() {
+    fn it_skips_instruction_if_key_press() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[5] = 8;
         chip8.keyboard[8] = 1;
         set_initial_opcode_to(0xE59E, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.program_counter, 0x204);
+
+        Ok(())
     }
 
     #[test]
-    fn it_skips_instruction_if_key_not_pressed() {
+    fn it_skips_instruction_if_key_not_pressed() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[3] = 6;
         chip8.keyboard[6] = 0;
         set_initial_opcode_to(0xE3A1, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.program_counter, 0x204);
+
+        Ok(())
     }
 
     #[test]
@@ -875,93 +952,107 @@ mod tests {
     }
 
     #[test]
-    fn it_sets_vx_to_the_value_of_the_delay_timer() {
+    fn it_sets_vx_to_the_value_of_the_delay_timer() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.delay_timer = 40;
         set_initial_opcode_to(0xF307, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[3], 40);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_the_delay_timer_to_vx() {
+    fn it_sets_the_delay_timer_to_vx() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[5] = 100;
         set_initial_opcode_to(0xF515, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.delay_timer, 99);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_the_sound_timer_to_vx() {
+    fn it_sets_the_sound_timer_to_vx() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[3] = 10;
         set_initial_opcode_to(0xF318, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.sound_timer, 9);
+
+        Ok(())
     }
 
     #[test]
-    fn it_adds_vx_to_i() {
+    fn it_adds_vx_to_i() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[8] = 0x10;
         chip8.index_register = 0x01;
         set_initial_opcode_to(0xF81E, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.index_register, 0x11);
+
+        Ok(())
     }
 
     #[test]
-    fn it_sets_i_to_sprite_location_read_from_vx() {
+    fn it_sets_i_to_sprite_location_read_from_vx() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[1] = 10;
         set_initial_opcode_to(0xF129, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.index_register, 10);
+
+        Ok(())
     }
 
     #[test]
-    fn it_stores_bcd_of_vx_from_i() {
+    fn it_stores_bcd_of_vx_from_i() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.v_registers[9] = 123;
         chip8.index_register = 0x203;
         set_initial_opcode_to(0xF933, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.memory[chip8.index_register as usize], 1);
         assert_eq!(chip8.memory[(chip8.index_register + 1) as usize], 2);
         assert_eq!(chip8.memory[(chip8.index_register + 2) as usize], 3);
+
+        Ok(())
     }
 
     #[test]
-    fn it_writes_from_v0_to_vx_starting_at_memory_address_i() {
+    fn it_writes_from_v0_to_vx_starting_at_memory_address_i() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         let v_registers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         chip8.v_registers = v_registers;
         chip8.index_register = 0x204;
         set_initial_opcode_to(0xF355, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(
             chip8.memory[chip8.index_register as usize..=chip8.index_register as usize + 3],
             [0, 1, 2, 3]
         );
+
+        Ok(())
     }
 
     #[test]
-    fn it_writes_to_v0_to_vx_starting_at_memory_address_i() {
+    fn it_writes_to_v0_to_vx_starting_at_memory_address_i() -> Result<(), Chip8Error> {
         let mut chip8 = get_chip8_instance();
         chip8.index_register = 0x202;
         chip8.memory[chip8.index_register as usize] = 101;
@@ -970,8 +1061,10 @@ mod tests {
         chip8.memory[chip8.index_register as usize + 3] = 104;
         set_initial_opcode_to(0xF365, &mut chip8.memory);
 
-        chip8.emulate_cycle();
+        chip8.emulate_cycle()?;
 
         assert_eq!(chip8.v_registers[0..=3], [101, 102, 103, 104]);
+
+        Ok(())
     }
 }

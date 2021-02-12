@@ -1,7 +1,6 @@
-use std::error::Error;
-
-use chip8_core::Graphics;
+use chip8_core::{Chip8Error, Graphics};
 use sdl2::{pixels::Color, rect::Rect, render::Canvas, video::Window, Sdl};
+use std::error::Error;
 
 pub struct SdlGraphics {
     canvas: Canvas<Window>,
@@ -23,7 +22,7 @@ impl SdlGraphics {
 }
 
 impl Graphics for SdlGraphics {
-    fn draw(&mut self, graphics: &[u8]) {
+    fn draw(&mut self, graphics: &[u8]) -> Result<(), Chip8Error> {
         let rects = graphics
             .iter()
             .enumerate()
@@ -38,7 +37,11 @@ impl Graphics for SdlGraphics {
         self.canvas.set_draw_color(Color::RGB(0, 0, 0));
         self.canvas.clear();
         self.canvas.set_draw_color(Color::RGB(255, 255, 255));
-        self.canvas.fill_rects(&rects);
+        if let Err(message) = self.canvas.fill_rects(&rects) {
+            return Err(Chip8Error::GraphicsError(message));
+        }
         self.canvas.present();
+
+        Ok(())
     }
 }

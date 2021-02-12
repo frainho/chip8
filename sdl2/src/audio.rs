@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use chip8_core::Audio;
+use chip8_core::{Audio, Chip8Error};
 use sdl2::{
     audio::{AudioCallback, AudioDevice, AudioSpecDesired},
     Sdl,
@@ -29,12 +29,14 @@ impl SdlAudio {
 }
 
 impl Audio for SdlAudio {
-    fn play(&self) {
+    fn play(&self) -> Result<(), Chip8Error> {
         self.audio_device.resume();
+        Ok(())
     }
 
-    fn stop(&self) {
+    fn stop(&self) -> Result<(), Chip8Error> {
         self.audio_device.pause();
+        Ok(())
     }
 }
 

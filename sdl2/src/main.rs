@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     chip8.load_program(rom_data)?;
 
     'main: loop {
-        if let State::Exit = chip8.emulate_cycle() {
+        if let State::Exit = chip8.emulate_cycle()? {
             break 'main;
         };
 
