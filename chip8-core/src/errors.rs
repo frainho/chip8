@@ -1,7 +1,11 @@
+/// Errors enum used both within the chip8 core and exported for use in a frontend
 #[derive(Debug)]
 pub enum Chip8Error {
+    /// Whether it failed when loading the program into memory
     UnableToLoadProgram,
+    /// Whether the program contains an opcode that is not valid
     InvalidOpcode(u16),
+    /// Error while trying to draw graphics
     GraphicsError(String),
 }
 

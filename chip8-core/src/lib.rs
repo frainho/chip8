@@ -1,3 +1,13 @@
+#![warn(missing_docs)]
+
+//! A chip8 interpreter built for fun
+//!
+//! This crate is contains the core functionality with the chip8's base opcodes
+//!
+//! This allows it to be used by different frontends as long as it compiles for that target
+//!
+//! It also tries to expose a few traits in order to allow that
+
 mod errors;
 mod traits;
 
@@ -6,7 +16,7 @@ use std::io::prelude::*;
 pub use errors::Chip8Error;
 pub use traits::{Audio, Graphics, Keyboard, NumberGenerator};
 
-pub const FONT_SET: [u8; 80] = [
+const FONT_SET: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
     0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
@@ -25,11 +35,21 @@ pub const FONT_SET: [u8; 80] = [
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 ];
 
+/// Basic enum to keep track of wether the user wants to quit
+///
+/// This is important because the chip8 will be the one
+/// listening for keyboard events
 pub enum State {
+    /// No key was pressed to exit
     Continue,
+    /// Should exit immediately
     Exit,
 }
 
+/// This struct is the main part of the Chip8 implementation
+///
+/// It contains all the specs of the interpreter
+/// and stores the frontends implementations of the required traits
 pub struct Chip8 {
     delay_timer: u8,
     graphics: [u8; 2048],
@@ -49,6 +69,7 @@ pub struct Chip8 {
 }
 
 impl Chip8 {
+    /// Instantiates the Chip8 with the provided implementations
     pub fn new(
         random_number_generator: Box<dyn NumberGenerator>,
         audio_device: Box<dyn Audio>,
@@ -75,7 +96,7 @@ impl Chip8 {
         chip8.load_font_set();
         chip8
     }
-
+    /// Loads a rom onto memory
     pub fn load_program(&mut self, rom_data: Vec<u8>) -> Result<(), Chip8Error> {
         let mut program_memory = &mut self.memory[self.program_counter as usize..];
         program_memory.write_all(&rom_data)?;
@@ -83,6 +104,12 @@ impl Chip8 {
         Ok(())
     }
 
+    /// Emulates a cycle of the interpreter
+    ///
+    /// It retrieves the next opcode to execute, it draws the next frame, updates the timers and listens to keyboard events
+    ///
+    /// In case the user wants to exit, either by clicking the `X` on the window or pressing the escape key
+    /// this state is returned to the caller so it can interrupt the loop
     pub fn emulate_cycle(&mut self) -> Result<State, Chip8Error> {
         self.fetch_opcode();
         self.interpret_opcode()?;
