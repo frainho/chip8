@@ -533,17 +533,17 @@ mod tests {
         assert_eq!(&chip8.memory[0..80], FONT_SET);
     }
 
-    // #[test]
-    // fn it_loads_the_program_to_memory() -> Result<(), std::io::Error> {
-    //     let fake_data = b"fake_data";
-    //     let _file = TestFile::create("test.ch8", fake_data)?;
-    //     let mut chip8 = get_chip8_instance();
+    #[test]
+    fn it_loads_the_program_to_memory() -> Result<(), Chip8Error> {
+        let fake_data = vec![1, 2, 3];
+        let fake_data_len = fake_data.len();
+        let mut chip8 = get_chip8_instance();
 
-    //     chip8.load_program("test.ch8")?;
+        chip8.load_program(fake_data)?;
 
-    //     assert_eq!(&chip8.memory[0x200..0x200 + fake_data.len()], fake_data);
-    //     Ok(())
-    // }
+        assert_eq!(&chip8.memory[0x200..0x200 + fake_data_len], vec![1, 2, 3]);
+        Ok(())
+    }
 
     #[test]
     fn it_fetches_correct_opcode_when_emulating_the_first_cycle() -> Result<(), Chip8Error> {
@@ -941,8 +941,24 @@ mod tests {
 
     //0xDXYN
     #[test]
-    fn it_draws_the_correct_pixels() {
-        // TBD
+    fn it_draws_the_correct_pixels() -> Result<(), Chip8Error> {
+        let mut chip8 = get_chip8_instance();
+
+        chip8.v_registers[0x1] = 0xAC;
+        chip8.v_registers[0x4] = 0xCA;
+        chip8.index_register = 0x200;
+        chip8.memory[0x200] = 0;
+        chip8.memory[0x201] = 1;
+        chip8.memory[0x201] = 0;
+        chip8.memory[0x201] = 2;
+        chip8.memory[0x201] = 4;
+        set_initial_opcode_to(0xD145, &mut chip8.memory);
+
+        chip8.emulate_cycle()?;
+
+        assert_eq!(chip8.graphics[684..=691], [1, 1, 0, 1, 0, 0, 0, 1]);
+        assert_eq!(chip8.graphics[749..=755], [1, 0, 0, 0, 1, 0, 1]);
+        Ok(())
     }
 
     #[test]
