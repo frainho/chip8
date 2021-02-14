@@ -5,6 +5,7 @@ authors = ["Filipe Rainho <filipenrainho@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+chip8-core = { path = "../chip8-core" }
 rand = "0.7"
 sdl2 = "0.34"
-chip8-core = { path = "../chip8-core" }
+structopt = "0.3"
