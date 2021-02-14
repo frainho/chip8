@@ -7,17 +7,21 @@ pub struct SdlGraphics {
 }
 
 impl SdlGraphics {
+    const WIDTH: u32 = 640;
+    const HEIGHT: u32 = 320;
+    const SCALE: u32 = 10;
+
     pub fn new(sdl_context: &Sdl) -> Result<SdlGraphics, Box<dyn Error>> {
-        let video_subsystem = sdl_context.video()?;
-        let window = video_subsystem
-            .window("chip8", 640, 320)
+        let canvas = sdl_context
+            .video()?
+            .window("chip8", Self::WIDTH, Self::HEIGHT)
             .position_centered()
             .opengl()
+            .build()?
+            .into_canvas()
             .build()?;
 
-        Ok(SdlGraphics {
-            canvas: window.into_canvas().build()?,
-        })
+        Ok(SdlGraphics { canvas })
     }
 }
 
@@ -28,9 +32,10 @@ impl Graphics for SdlGraphics {
             .enumerate()
             .filter(|(_, pixel)| **pixel == 1)
             .map(|(idx, _)| {
-                let row = (idx / 64usize) * 10;
-                let col = (idx % 64usize) * 10;
-                Rect::new(col as i32, row as i32, 10, 10)
+                let idx = idx as u32;
+                let row = (idx / 64) * Self::SCALE;
+                let col = (idx % 64) * Self::SCALE;
+                Rect::new(col as i32, row as i32, Self::SCALE, Self::SCALE)
             })
             .collect::<Vec<Rect>>();
 
